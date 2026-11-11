@@ -43,6 +43,209 @@ def profile_table(df: pd.DataFrame) -> dict:
     }
 
 
+# ------------------------------------------------------- E-Presso tables
+# What each source table must look like. File names are only the DEFAULTS in
+# data/; an uploaded file can have any name. Column names must match exactly.
+TABLE_SPECS = {
+    'sales': {
+        'label': 'Sales', 'default_file': 'Sales.txt',
+        'required': ['Sales ID', 'Date', 'Store ID', 'StoreYear', 'Category ID',
+                     'Product ID', 'Revenue'],
+    },
+    'products': {
+        'label': 'Products', 'default_file': 'Products.txt',
+        'required': ['Product ID', 'Product'],
+    },
+    'categories': {
+        'label': 'Categories', 'default_file': 'Categories.txt',
+        'required': ['Category ID', 'Category'],
+    },
+    'stores': {
+        'label': 'Stores', 'default_file': 'Support_EX_B_Stores_1.csv',
+        'required': ['ID', 'City', 'State', 'StoreType', 'Market', 'Location'],
+    },
+    'survey': {
+        'label': 'Survey Results', 'default_file': 'Support_EX_B_Survey_1.xlsx',
+        'sheet': 'Survey Results', 'header': 2,  # title rows above the header
+        'required': ['Survey ID', 'Store ID', 'Year', 'Satisfaction', 'Interest'],
+    },
+}
+
+
+class DataError(ValueError):
+    """A problem with an input file, worded for a manager rather than a programmer."""
+
+
+def _sniff_delimiter(file_bytes: bytes) -> str:
+    """Look at the header line: tab-separated if it contains a tab, else comma."""
+    first_line = file_bytes.split(b'\n', 1)[0]
+    return '\t' if b'\t' in first_line else ','
+
+
+def read_epresso_table(table: str, file_bytes: bytes, filename: str) -> pd.DataFrame:
+    """Read one E-Presso table from raw file bytes and check its required columns.
+
+    Text files are read with every column as text, so IDs like 'P01' and postal
+    codes keep their exact form; numbers are converted later on purpose.
+    Raises DataError with a plain message if the file can't be used."""
+    spec = TABLE_SPECS[table]
+    label, name = spec['label'], filename.lower()
+    buffer = io.BytesIO(file_bytes)
+    try:
+        if name.endswith(EXCEL_EXT):
+            df = pd.read_excel(buffer, sheet_name=spec.get('sheet', 0),
+                               header=spec.get('header', 0))
+        elif name.endswith(TEXT_EXT):
+            df = pd.read_csv(buffer, sep=_sniff_delimiter(file_bytes), dtype=str,
+                             encoding='utf-8-sig')
+        else:
+            raise DataError(f'{label}: "{filename}" is not a CSV, TXT or Excel file.')
+    except DataError:
+        raise
+    except Exception as exc:  # unreadable file, missing sheet, bad encoding, ...
+        raise DataError(f'{label}: could not read "{filename}" ({exc}).') from exc
+
+    df.columns = [str(c).strip() for c in df.columns]
+    df = df.dropna(how='all')  # fully blank rows, e.g. trailing Excel rows
+    for col in df.select_dtypes(include=['object', 'string']).columns:
+        df[col] = df[col].str.strip()
+
+    missing = [c for c in spec['required'] if c not in df.columns]
+    if missing:
+        raise DataError(f'{label}: "{filename}" is missing required column(s) '
+                        f'{missing}. Columns found: {list(df.columns)}.')
+    return df
+
+
+def prepare_sales(sales: pd.DataFrame) -> pd.DataFrame:
+    """Turn Sales text columns into real types and add Year / Month columns.
+
+    Date: the export looks like '1/31/2025 0:00:00'; anything in another format
+    is parsed flexibly. Revenue: '$' and ',' are removed, then converted to a
+    number. Values that can't be converted become blank (NaN) rather than 0, so
+    they are excluded from sums and reported in the data-quality section."""
+    out = sales.copy()
+    raw_date = out['Date']
+    dates = pd.to_datetime(raw_date, format='%m/%d/%Y %H:%M:%S', errors='coerce')
+    retry = dates.isna() & raw_date.notna()
+    if retry.any():
+        dates.loc[retry] = pd.to_datetime(raw_date[retry], format='mixed', errors='coerce')
+    out['Date'] = dates
+    out['Revenue'] = pd.to_numeric(
+        out['Revenue'].astype(str).str.replace(r'[$,]', '', regex=True), errors='coerce')
+    out['Year'] = out['Date'].dt.year.astype('Int64')
+    out['Month'] = out['Date'].dt.month.astype('Int64')
+    out['MonthStart'] = out['Date'].dt.to_period('M').dt.to_timestamp()
+    return out
+
+
+def prepare_survey(survey: pd.DataFrame) -> pd.DataFrame:
+    """Survey Year is text like 'Y2025'; pull out the 4-digit year as a number.
+    Satisfaction and Interest become numbers; blanks stay blank, never 0."""
+    out = survey.copy()
+    out['Year'] = pd.to_numeric(out['Year'].astype(str).str.extract(r'(\d{4})')[0],
+                                errors='coerce').astype('Int64')
+    for col in ('Satisfaction', 'Interest'):
+        out[col] = pd.to_numeric(out[col], errors='coerce')
+    return out
+
+
+def blank_report(df: pd.DataFrame, key_col: str) -> list[dict]:
+    """For every column with blanks: how many, and which rows (by key) have them."""
+    report = []
+    for col in df.columns:
+        mask = df[col].isna()
+        if mask.any():
+            keys = df.loc[mask, key_col].astype(str).tolist() if key_col in df else []
+            report.append({'column': col, 'blank_count': int(mask.sum()),
+                           'rows (by key)': ', '.join(keys[:25]) + (' ...' if len(keys) > 25 else '')})
+    return report
+
+
+def _dedupe_dimension(dim: pd.DataFrame, key: str, label: str, issues: list) -> pd.DataFrame:
+    """A lookup table must have one row per key, or a join would copy sales rows and
+    inflate revenue. If a key repeats, keep its first row and report it."""
+    dupes = dim[key][dim[key].duplicated()].dropna().unique().tolist()
+    if dupes:
+        issues.append(f'{label}: key {key} repeats for {dupes}; only the first row of each '
+                      'was used so revenue is not duplicated.')
+        dim = dim.drop_duplicates(subset=key, keep='first')
+    return dim
+
+
+def build_model(tables: dict[str, pd.DataFrame]) -> dict:
+    """Combine the raw tables into one sales fact table at the Sales grain
+    (store x month x product) and record a merge check around every join.
+
+    Every join is many-to-one from Sales to a lookup table, so the row count and
+    revenue total must not change. Survey data is NOT joined here: it is one row
+    per store-year, and is compared with revenue at that grain in its own function.
+    Returns {'fact', 'survey', 'merge_checks', 'issues'}."""
+    issues: list[str] = []
+    sales = prepare_sales(tables['sales'])
+    survey = prepare_survey(tables['survey'])
+
+    products = _dedupe_dimension(tables['products'][['Product ID', 'Product']],
+                                 'Product ID', 'Products', issues)
+    categories = _dedupe_dimension(tables['categories'][['Category ID', 'Category']],
+                                   'Category ID', 'Categories', issues)
+    stores = tables['stores'].rename(columns={'ID': 'Store ID', 'StoreType': 'Channel'})
+    stores = _dedupe_dimension(
+        stores[['Store ID', 'City', 'State', 'Channel', 'Market', 'Location']],
+        'Store ID', 'Stores', issues)
+
+    checks = []
+    fact = sales
+    for label, dim, key in (('Sales + Products', products, 'Product ID'),
+                            ('+ Categories', categories, 'Category ID'),
+                            ('+ Stores', stores, 'Store ID')):
+        fact, report = check_merge(fact, dim, on=key, value_col='Revenue', how='left')
+        checks.append({'merge': label, 'key': key, **report})
+        if report['changed']:
+            issues.append(f'{label}: {report["warning"]}')
+
+    # Sales rows whose key is not in the lookup table (they keep revenue but no label).
+    for key, col, label in (('Product ID', 'Product', 'Products'),
+                            ('Category ID', 'Category', 'Categories'),
+                            ('Store ID', 'Channel', 'Stores')):
+        orphan = fact[col].isna() & fact[key].notna()
+        if orphan.any():
+            ids = sorted(fact.loc[orphan, key].astype(str).unique())
+            issues.append(f'{int(orphan.sum())} Sales row(s) have a {key} not found in '
+                          f'{label}: {ids}.')
+
+    # Each product should belong to exactly one category in Sales.
+    cats_per_product = sales.dropna(subset=['Product ID', 'Category ID']) \
+        .groupby('Product ID')['Category ID'].nunique()
+    multi = cats_per_product[cats_per_product > 1].index.tolist()
+    if multi:
+        issues.append(f'Product(s) {multi} appear under more than one Category ID in Sales.')
+
+    n_bad_date = int(fact['Date'].isna().sum())
+    if n_bad_date:
+        issues.append(f'{n_bad_date} Sales row(s) have a blank or unreadable Date; they count '
+                      'in total revenue but not in any year or month.')
+    n_bad_rev = int(fact['Revenue'].isna().sum())
+    if n_bad_rev:
+        issues.append(f'{n_bad_rev} Sales row(s) have a blank or non-numeric Revenue and are '
+                      'excluded from every revenue sum.')
+    n_neg = int((fact['Revenue'] < 0).sum())
+    if n_neg:
+        issues.append(f'{n_neg} Sales row(s) have negative Revenue (kept as-is).')
+    n_dup_id = int(sales['Sales ID'].duplicated().sum())
+    if n_dup_id:
+        issues.append(f'{n_dup_id} Sales row(s) repeat a Sales ID that appears earlier.')
+
+    # Label products by ID + name: some names (e.g. "Base Model") repeat across IDs.
+    fact['Product Label'] = fact['Product ID'].astype(str) + ' ' + fact['Product'].fillna('(unknown)')
+    return {'fact': fact, 'survey': survey, 'merge_checks': checks, 'issues': issues}
+
+
+def total_revenue(fact: pd.DataFrame) -> float:
+    """Sum of the stored Revenue column over the rows given (blanks are skipped)."""
+    return float(fact['Revenue'].sum())
+
+
 # ---------------------------------------------------------- tool contract
 @dataclass
 class ToolResult:

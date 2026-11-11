@@ -28,7 +28,17 @@ _Upload files, use filters, ask the assistant. Include the file names and sheets
 - Sales.`Store ID` → Stores.`ID` (many-to-one). Channel = Stores.`StoreType`.
 - Sales.`StoreYear` → Survey.`Survey ID` (many-to-one). `StoreYear` always equals `Store ID` + `_` + the 2-digit year of `Date` (checked on all 25,200 rows).
 
-All joins are many-to-one from Sales, so none should change the row count or the revenue sum. Merge checks: _to be recorded from the app's `check_merge()` output._
+All joins are many-to-one from Sales, so none should change the row count or the revenue sum. The app runs `check_merge()` around every join and shows the result on the **Data and quality** tab. Results on the supplied data:
+
+| Merge | Key | Rows before | Rows after | Revenue sum before | Revenue sum after | Explanation |
+|---|---|---|---|---|---|---|
+| Sales + Products | `Product ID` | 25,200 | 25,200 | $42,174,440.00 | $42,174,440.00 | One row per product in Products, so no duplication |
+| + Categories | `Category ID` | 25,200 | 25,200 | $42,174,440.00 | $42,174,440.00 | One row per category |
+| + Stores | `Store ID` = Stores.`ID` | 25,200 | 25,200 | $42,174,440.00 | $42,174,440.00 | One row per store |
+
+Survey Results is **not** joined to the sales rows. It is one row per store-year, so it is compared with revenue summed to store-year, never repeated onto each sales row.
+
+If an updated lookup table repeats a key, the app keeps the first row for that key and reports it, so the join cannot copy sales rows and inflate revenue.
 
 ## Metric definitions
 _What "revenue" means here, and anything it does not mean._

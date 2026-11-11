@@ -44,6 +44,18 @@ Findings so far (report these in the data-quality section):
 Power BI reference report (for validation): Revenue Analysis page (bar by City/Market/StoreType, line + column of Revenue by Date, Category slicer),
 Survey Analysis page (scatter of Satisfaction vs Revenue by Survey ID, store table). I'll supply Power BI numbers for the validation table.
 
+## Environment
+- Python 3.12 in `.venv`. Run with `.\.venv\Scripts\python.exe -m pytest` / `-m streamlit run streamlit_app.py`.
+- Headless app check: `streamlit.testing.v1.AppTest.from_file('streamlit_app.py').run()`.
+- Push to GitHub after each finished step (Streamlit Cloud redeploys from `main`).
+- `docs/` is git-ignored on purpose (local reference only). Data files in `data/` ARE committed.
+
+## Progress log
+- 2026-11-10: Data profiled; grain statements in README. Step 2–3 done: `analytics.read_epresso_table` /
+  `build_model` / `total_revenue`, merge checks shown in app, data-quality section, per-table upload with
+  defaults from `data/`, cache keyed on bytes (verified +$1,000 recalculates). Tests in `tests/test_model.py`.
+  **Next: step 4, filters + ≥3 charts on the Dashboard tab.** Deployment status on Streamlit Cloud: unconfirmed.
+
 ## Build plan (Project Guide order)
 1. Checkpoint 0: repo from `jmmcallister/epresso-starter` template, deployed on Streamlit Community Cloud.
 2. Load all files, show a data profile, and write grain statements (table above → README).
