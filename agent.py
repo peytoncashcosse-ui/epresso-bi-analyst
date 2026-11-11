@@ -245,10 +245,154 @@ def rules_router(question: str, model: dict) -> dict:
     return {'kind': 'unsupported', 'calls': [], 'decline': UNSUPPORTED}
 
 
-def llm_router(question: str, model: dict):
-    """Option A router. TODO: ask a model that supports function calling to choose
-    from TOOLS. Must return the same shape as rules_router."""
-    raise NotImplementedError('Add the language-model router after the rules version works.')
+# ------------------------------------------------- language-model router
+DEFAULT_LLM_MODEL = 'gemini-2.5-flash'
+MAX_TOOL_ROUNDS = 4  # the model may ask for tools at most this many times per question
+
+ANSWER_FORMAT = """Answer in exactly this format, with nothing before it:
+FINDINGS:
+- one bullet per fact, each number copied exactly as it appears in a tool result
+INTERPRETATION:
+- what the findings may mean, cautiously; association is not causation
+NEXT STEPS:
+- what to check next, or "No recommendation is supported by this data alone." plus the missing information
+If no tool can answer the question, write under FINDINGS that you cannot answer it and list what you can answer."""
+
+
+class LLMUnavailable(RuntimeError):
+    """The language model could not be used (no key, API error, quota). Caller falls back."""
+
+
+def tool_declarations(model: dict) -> list[dict]:
+    """Describe each approved tool to the model. Every parameter is limited to values
+    that exist in the LOADED data, so the model cannot invent a store or year."""
+    fact = model['fact']
+    years = [str(int(y)) for y in sorted(fact['Year'].dropna().unique())]
+    allowed = {
+        'year': (years, 'Calendar year. Omit for all years.'),
+        'start_year': (years, 'First year to compare. Omit for the earliest year.'),
+        'end_year': (years, 'Last year to compare. Omit for the latest year.'),
+        'store': (sorted(fact['Store Label'].dropna().unique()),
+                  'One store, as "ID City". Omit for all stores.'),
+        'category': (sorted(fact['Category'].dropna().unique()), 'Product category. Omit for all.'),
+        'channel': (sorted(fact['Channel'].dropna().unique()), 'Sales channel. Omit for all.'),
+        'by': (list(analytics.GROWTH_DIMENSIONS), 'What to rank: store, channel or category.'),
+    }
+    decls = []
+    for name, spec in TOOLS.items():
+        props = {p: {'type': 'STRING', 'enum': [str(v) for v in allowed[p][0]],
+                     'description': allowed[p][1]} for p in sorted(spec['params'])}
+        decl = {'name': name, 'description': spec['description']}
+        if props:
+            decl['parameters'] = {'type': 'OBJECT', 'properties': props}
+        decls.append(decl)
+    return decls
+
+
+def _numbers_in(obj) -> set[float]:
+    """Every number inside a tool result (values, scope, rows used), as floats."""
+    found: set[float] = set()
+    if isinstance(obj, bool) or obj is None:
+        return found
+    if isinstance(obj, (int, float)):
+        found.add(float(obj))
+    elif isinstance(obj, str):
+        found |= {n for n, _ in _numbers_in_text(obj)}
+    elif isinstance(obj, dict):
+        for k, v in obj.items():
+            found |= _numbers_in(k) | _numbers_in(v)
+    elif isinstance(obj, (list, tuple)):
+        for v in obj:
+            found |= _numbers_in(v)
+    return found
+
+
+_NUM = re.compile(r'(?<![A-Za-z])(-?\d[\d,]*(?:\.\d+)?)\s*(million|m\b|k\b|thousand)?', re.I)
+
+
+def _numbers_in_text(text: str) -> list[tuple[float, str]]:
+    """Numbers written in text, e.g. '$6,339,640.00', '-66.81%', '$6.34 million'."""
+    out = []
+    for m in _NUM.finditer(text):
+        raw, unit = m.group(1).replace(',', ''), (m.group(2) or '').lower()
+        try:
+            x = float(raw)
+        except ValueError:
+            continue
+        mult = {'million': 1e6, 'm': 1e6, 'k': 1e3, 'thousand': 1e3}.get(unit, 1)
+        out.append((x * mult, m.group(0).strip()))
+    return out
+
+
+def unsupported_numbers(text: str, tool_log: list, question: str) -> list[str]:
+    """Numbers in the model's text that do NOT come from any tool result (or the
+    question). Rounded versions of a tool number count as supported."""
+    known = set()
+    for call in tool_log:
+        known |= _numbers_in(call['result']) | _numbers_in(call['arguments'])
+    known |= {n for n, _ in _numbers_in_text(question)}
+    bad = []
+    for x, shown in _numbers_in_text(text):
+        if abs(x) <= 12 and x == int(x):      # list markers, "5 categories", month counts
+            continue
+        # Compare sizes: "a 66.81% decline" is the tool's -66.81.
+        ok = any(abs(abs(x) - abs(k)) <= max(0.006, abs(k) * 0.005) for k in known)
+        if not ok:
+            bad.append(shown)
+    return bad
+
+
+def _sections(text: str) -> dict[str, list[str]]:
+    """Split the model's reply into FINDINGS / INTERPRETATION / NEXT STEPS bullet lists."""
+    parts = {'findings': [], 'interpretation': [], 'next_steps': []}
+    current = 'findings'
+    heads = {'FINDINGS': 'findings', 'INTERPRETATION': 'interpretation', 'NEXT STEPS': 'next_steps'}
+    for line in (text or '').splitlines():
+        s = line.strip().strip('*#').strip()
+        head = s.rstrip(':').strip().upper()
+        if head in heads:
+            current = heads[head]
+            continue
+        s = re.sub(r'^[-*•]\s*', '', line.strip())
+        if s:
+            parts[current].append(s)
+    return parts
+
+
+def llm_answer(question: str, model: dict, client, model_name: str = DEFAULT_LLM_MODEL,
+               dashboard_scope: str = '') -> tuple[dict, list]:
+    """Option A: the language model chooses tools by function calling. OUR dispatcher
+    runs each requested tool and logs it; the model only sees the results and writes
+    the explanation. Raises LLMUnavailable on any API problem so the caller can fall back."""
+    from google.genai import types  # imported here so the rules mode never needs it
+
+    log: list = []
+    note = (f' The user\'s dashboard filters ({dashboard_scope}) do NOT apply to your tools; '
+            'pass parameters explicitly.' if dashboard_scope else '')
+    config = types.GenerateContentConfig(
+        system_instruction=SYSTEM_PROMPT + '\n' + ANSWER_FORMAT + note,
+        tools=[types.Tool(function_declarations=tool_declarations(model))],
+        automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+        temperature=0)
+    contents = [types.Content(role='user', parts=[types.Part(text=question)])]
+    try:
+        for _ in range(MAX_TOOL_ROUNDS + 1):
+            response = client.models.generate_content(model=model_name, contents=contents,
+                                                       config=config)
+            calls = response.function_calls or []
+            if not calls:
+                return _sections(response.text or ''), log
+            contents.append(response.candidates[0].content)
+            replies = []
+            for fc in calls:
+                args = {k: v for k, v in dict(fc.args or {}).items() if v not in (None, '')}
+                result = run_tool(fc.name, args, model, log)
+                replies.append(types.Part.from_function_response(
+                    name=fc.name, response={'result': result.to_dict()}))
+            contents.append(types.Content(role='user', parts=replies))
+    except Exception as exc:  # network, bad key, quota (429), model not found, ...
+        raise LLMUnavailable(f'{type(exc).__name__}: {str(exc)[:200]}') from exc
+    raise LLMUnavailable(f'The model kept requesting tools after {MAX_TOOL_ROUNDS} rounds.')
 
 
 # ------------------------------------------------------- writing the answer
@@ -377,15 +521,65 @@ def next_steps_lines(kind: str, result: ToolResult | None) -> list[str]:
                  'comparison to dig deeper.'])
 
 
-def answer_question(question: str, model: dict, mode: str = 'rules',
-                    data_note: str = '', dashboard_scope: str = '') -> dict:
-    """Route the question, run the chosen tool(s), and assemble an answer with
-    Scope, Findings, Interpretation and Next steps, plus the tool-call log."""
-    log: list = []
-    routed = rules_router(question, model) if mode == 'rules' else llm_router(question, model)
-    kind = routed['kind']
+def _filters_note(dashboard_scope: str) -> str:
     note = ' Dashboard filters are **not** applied to the assistant'
-    note += f' (current dashboard filters: {dashboard_scope}).' if dashboard_scope else '.'
+    return note + (f' (current dashboard filters: {dashboard_scope}).' if dashboard_scope else '.')
+
+
+def answer_question(question: str, model: dict, mode: str = 'rules', data_note: str = '',
+                    dashboard_scope: str = '', client=None,
+                    model_name: str = DEFAULT_LLM_MODEL) -> dict:
+    """mode='llm': ask the language model (with our tools); if it is unavailable, fall back
+    to the rules. mode='rules': rules-based assistant only."""
+    if mode == 'llm':
+        if client is None:
+            answer = _rules_answer(question, model, data_note, dashboard_scope)
+            answer['mode'] += ' (fallback: no language-model API key configured)'
+            return answer
+        try:
+            return _llm_answer_dict(question, model, client, model_name, data_note,
+                                    dashboard_scope)
+        except LLMUnavailable as exc:
+            answer = _rules_answer(question, model, data_note, dashboard_scope)
+            answer['mode'] += f' (fallback: language model unavailable: {exc})'
+            return answer
+    return _rules_answer(question, model, data_note, dashboard_scope)
+
+
+def _llm_answer_dict(question, model, client, model_name, data_note, dashboard_scope) -> dict:
+    """Run the model, then CHECK it: any number in its text that is not in a tool result
+    means its Findings are replaced by ones written directly from the tool results."""
+    parts, log = llm_answer(question, model, client, model_name, dashboard_scope)
+    results = [ToolResult(**c['result']) for c in log]
+    scopes = [_scope_text(r) for r in results]
+    scope = ('; '.join(scopes) if scopes else 'no calculation was run')
+    scope += (f'. Data: {data_note}' if data_note and log else '') + '.' + _filters_note(dashboard_scope)
+    text = '\n'.join(parts['findings'] + parts['interpretation'] + parts['next_steps'])
+    bad = unsupported_numbers(text, log, question)
+    mode = f'Language-model agent (Option A, {model_name}, function calling)'
+    findings, interpretation = parts['findings'], parts['interpretation']
+    if bad:
+        mode += (f'. Number check FAILED for {bad[:5]}: model text replaced by findings written '
+                 'directly from the tool results')
+        findings = [line for r in results for line in findings_lines(r)] or \
+            ['The model gave numbers that no tool calculated, so its answer was withheld.']
+        interpretation = list(dict.fromkeys(c for r in results for c in r.caveats))
+    elif log:
+        mode += '. Number check passed: every number matches a tool result'
+    return {'mode': mode, 'kind': 'llm', 'tool_log': log, 'scope': scope,
+            'findings': findings or ['(The model returned no findings.)'],
+            'interpretation': interpretation,
+            'next_steps': parts['next_steps'] or ['No recommendation is supported by this data alone.']}
+
+
+def _rules_answer(question: str, model: dict, data_note: str = '',
+                  dashboard_scope: str = '') -> dict:
+    """Route the question with the rules, run the chosen tool(s), and assemble an answer
+    with Scope, Findings, Interpretation and Next steps, plus the tool-call log."""
+    log: list = []
+    routed = rules_router(question, model)
+    kind = routed['kind']
+    note = _filters_note(dashboard_scope)
     base = {'mode': 'Rules-based assistant (Option B)', 'kind': kind, 'tool_log': log}
 
     if routed['decline']:

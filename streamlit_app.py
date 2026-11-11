@@ -198,10 +198,40 @@ def show_answer(answer: dict):
             st.write('No tool was called for this question.')
 
 
+def gemini_client():
+    """Build the Gemini client from Streamlit Secrets. Returns (client, model, problem).
+    The key is never shown, logged or stored anywhere else."""
+    try:
+        key = st.secrets.get('GEMINI_API_KEY', '')
+        model_name = st.secrets.get('GEMINI_MODEL', agent.DEFAULT_LLM_MODEL)
+    except Exception:  # no secrets file at all
+        key, model_name = '', agent.DEFAULT_LLM_MODEL
+    if not key:
+        return None, model_name, 'no GEMINI_API_KEY in Streamlit Secrets'
+    try:
+        from google import genai
+        return genai.Client(api_key=key), model_name, ''
+    except Exception as exc:
+        return None, model_name, f'could not start the Gemini client ({type(exc).__name__})'
+
+
 with tab_assistant:
-    st.caption('Mode: rules-based assistant (Option B). Keyword rules pick one of eight approved '
-               'analytical functions and its parameters; the function calculates the answer from '
-               'the currently loaded data. No AI-written code is ever run.')
+    client, llm_model, llm_problem = gemini_client()
+    rules_only = st.toggle('Use the rules-based assistant only', value=client is None,
+                           disabled=client is None,
+                           help='Off: Gemini chooses the tools (Option A). On: keyword rules choose '
+                                'them (Option B). Both use the same eight functions.')
+    if client is not None and not rules_only:
+        st.caption(f'Mode: language-model agent ({llm_model}, function calling). The model may only '
+                   'choose among eight approved analytical functions; our code runs them on the '
+                   'currently loaded data, and every number in the answer is checked against the '
+                   'tool results. If the API fails or its quota runs out, the rules-based assistant '
+                   'answers instead. No AI-written code is ever run.')
+    else:
+        st.caption('Mode: rules-based assistant (Option B). Keyword rules pick one of eight approved '
+                   'analytical functions and its parameters; the function calculates the answer '
+                   'from the currently loaded data. No AI-written code is ever run.'
+                   + (f' Language model off: {llm_problem}.' if llm_problem else ''))
     st.session_state.setdefault('n_questions', 0)
     st.session_state.setdefault('history', [])
     remaining = MAX_QUESTIONS - st.session_state['n_questions']
@@ -221,8 +251,10 @@ with tab_assistant:
         else:
             st.session_state['n_questions'] += 1
             active = {k: v for k, v in selections.items() if v}
-            answer = agent.answer_question(
-                question, model, mode='rules', data_note=sources['Sales'],
-                dashboard_scope=analytics.describe_scope(active) if active else '')
+            with st.spinner('Calculating...'):
+                answer = agent.answer_question(
+                    question, model, mode='rules' if rules_only else 'llm',
+                    data_note=sources['Sales'], client=client, model_name=llm_model,
+                    dashboard_scope=analytics.describe_scope(active) if active else '')
             st.session_state['history'].append({'question': question, 'answer': answer})
             st.rerun()

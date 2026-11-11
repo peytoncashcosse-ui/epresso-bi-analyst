@@ -71,7 +71,13 @@ Survey Analysis page (scatter of Satisfaction vs Revenue by Survey ID, store tab
   ("should…close") get evidence + NO_RECOMMENDATION. Answers = Scope / Findings / Interpretation / Next steps +
   tool log; scope says dashboard filters are not applied and names the Sales source (for Test 5). 53 tests.
   Fix+retest recorded in validation/agent_tests.md (weather-in-Denver → revenue bug).
-  **Next: step 10, Gemini function-calling router (needs the user's API key in Streamlit Secrets), fallback to rules.**
+- 2026-11-10: Step 10 code done (untested against the real API). `agent.llm_answer` = manual function-calling loop
+  with google-genai (automatic calling disabled; our `run_tool` runs and logs). Params limited to enums from loaded
+  data (`tool_declarations`). `unsupported_numbers` checks every number in the model text against tool results; on
+  failure findings are replaced by `findings_lines`. Any API error → `LLMUnavailable` → rules fallback with reason.
+  Key from `st.secrets['GEMINI_API_KEY']` (set on Streamlit Cloud only; no local secrets.toml). Optional
+  `GEMINI_MODEL` secret, default gemini-2.5-flash. Fake-client tests in tests/test_llm_agent.py (63 tests).
+  **Next: test Gemini on the live app after reboot; then step 11 (five agent tests, validation table, reflection, README).**
   Still owed: Power BI numbers from the user for the validation table; assistant before/after question for agent Test 5.
 
 ## Build plan (Project Guide order)
