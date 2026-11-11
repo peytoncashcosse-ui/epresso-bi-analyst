@@ -9,7 +9,7 @@ App values are from the live app with the supplied data loaded (Data and quality
 | Website revenue | $27,218,880 | $27,218,880.00 | **Match**. Channel = Stores.`StoreType`; the website is store SH00. |
 | Brick-and-mortar revenue | $14,955,560 | $14,955,560.00 | **Match**. The two channels sum to the total. |
 | Revenue by year | 2025–2029 all match the app | 2025 $7,181,750.00 · 2026 $8,016,950.00 · 2027 $8,824,720.00 · 2028 $8,969,470.00 · 2029 $9,181,550.00 | **Match** for all five years |
-| Monthly revenue pattern | _pending_ | Jan 2025 $548,340.00 · Feb 2025 $275,510.00 (lowest month) · Jun 2027 $562,220.00 · Nov 2029 $1,125,950.00 · Dec 2029 $2,365,730.00 (highest month). Every year peaks in Nov–Dec; December alone is 25.6% of all revenue. | _pending_ |
+| Monthly revenue pattern | Line chart drilled to year-month: same values for the months checked, and the same shape (February low, November–December peak each year) | Jan 2025 $548,340.00 · Feb 2025 $275,510.00 (lowest month) · Jun 2027 $562,220.00 · Nov 2029 $1,125,950.00 · Dec 2029 $2,365,730.00 (highest month). Every year peaks in Nov–Dec; December alone is 25.6% of all revenue. | **Match** |
 | Additional measure: revenue by category (Espresso Machines) | $27,093,220 | $27,093,220.00 | **Match**. Category comes from Sales.`Category ID` because Products has no category column. |
 
 ## Why the numbers agree
