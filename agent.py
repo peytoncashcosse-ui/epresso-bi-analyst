@@ -311,8 +311,13 @@ def _numbers_in(obj) -> set[float]:
 _NUM = re.compile(r'(?<![A-Za-z])(-?\d[\d,]*(?:\.\d+)?)\s*(million|m\b|k\b|thousand)?', re.I)
 
 
-def _numbers_in_text(text: str) -> list[tuple[float, str]]:
-    """Numbers written in text, e.g. '$6,339,640.00', '-66.81%', '$6.34 million'."""
+_HEDGE = re.compile(r'(about|around|roughly|nearly|almost|approximately|approx\.?|~|close to|'
+                    r'just over|just under|over|under)\s*\$?\s*$', re.I)
+
+
+def _numbers_in_text(text: str, with_hedge: bool = False) -> list:
+    """Numbers written in text, e.g. '$6,339,640.00', '-66.81%', '$6.34 million'.
+    with_hedge=True also says whether the number follows a word like 'about'."""
     out = []
     for m in _NUM.finditer(text):
         raw, unit = m.group(1).replace(',', ''), (m.group(2) or '').lower()
@@ -321,7 +326,8 @@ def _numbers_in_text(text: str) -> list[tuple[float, str]]:
         except ValueError:
             continue
         mult = {'million': 1e6, 'm': 1e6, 'k': 1e3, 'thousand': 1e3}.get(unit, 1)
-        out.append((x * mult, m.group(0).strip()))
+        hedged = bool(_HEDGE.search(text[max(0, m.start() - 20):m.start()]))
+        out.append((x * mult, m.group(0).strip(), hedged) if with_hedge else (x * mult, m.group(0).strip()))
     return out
 
 
@@ -333,11 +339,16 @@ def unsupported_numbers(text: str, tool_log: list, question: str) -> list[str]:
         known |= _numbers_in(call['result']) | _numbers_in(call['arguments'])
     known |= {n for n, _ in _numbers_in_text(question)}
     bad = []
-    for x, shown in _numbers_in_text(text):
+    for x, shown, hedged in _numbers_in_text(text, with_hedge=True):
         if abs(x) <= 12 and x == int(x):      # list markers, "5 categories", month counts
             continue
-        # Compare sizes: "a 66.81% decline" is the tool's -66.81.
-        ok = any(abs(abs(x) - abs(k)) <= max(0.006, abs(k) * 0.005) for k in known)
+        # Compare sizes: "a 66.81% decline" is the tool's -66.81. Accept the tool number
+        # rounded to 0-2 decimals or abbreviated ("$6.34 million"); a number marked as
+        # approximate ("about 70%" for 70.68) may be up to 3% off.
+        tolerance = 0.03 if hedged else 0.005
+        ok = any(abs(abs(x) - abs(k)) <= max(0.006, abs(k) * tolerance)
+                 or any(abs(round(abs(k), d) - abs(x)) < 1e-9 for d in (0, 1, 2))
+                 for k in known)
         if not ok:
             bad.append(shown)
     return bad

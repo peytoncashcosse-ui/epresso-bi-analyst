@@ -145,13 +145,13 @@ with tab_dash:
         fig = px.bar(yearly, x='Year', y='Revenue', color='Channel', barmode='group',
                      title='Annual revenue by sales channel', hover_data=money)
         fig.update_layout(yaxis_title='Revenue ($)', xaxis_title='Year')
-        left.plotly_chart(fig, use_container_width=True)
+        left.plotly_chart(fig, width='stretch')
 
         monthly = analytics.revenue_by(view, 'MonthStart', 'Channel')
         fig = px.line(monthly, x='MonthStart', y='Revenue', color='Channel', markers=True,
                       title='Monthly revenue by sales channel', hover_data=money)
         fig.update_layout(yaxis_title='Revenue ($)', xaxis_title='Month')
-        right.plotly_chart(fig, use_container_width=True)
+        right.plotly_chart(fig, width='stretch')
 
         left, right = st.columns(2)
         stores = analytics.revenue_by(view, 'Store Label', 'Channel').sort_values('Revenue')
@@ -159,13 +159,13 @@ with tab_dash:
                      title='Revenue by store', hover_data=money,
                      height=max(350, 28 * len(stores)))
         fig.update_layout(xaxis_title='Revenue ($)', yaxis_title='Store (ID + city)')
-        left.plotly_chart(fig, use_container_width=True)
+        left.plotly_chart(fig, width='stretch')
 
         cats = analytics.revenue_by(view, 'Category').sort_values('Revenue', ascending=False)
         fig = px.bar(cats, x='Category', y='Revenue', title='Revenue by product category',
                      hover_data=money)
         fig.update_layout(yaxis_title='Revenue ($)', xaxis_title='Category')
-        right.plotly_chart(fig, use_container_width=True)
+        right.plotly_chart(fig, width='stretch')
 
         with st.expander('Numbers behind the charts'):
             a, b = st.columns(2)
@@ -210,7 +210,10 @@ def gemini_client():
         return None, model_name, 'no GEMINI_API_KEY in Streamlit Secrets'
     try:
         from google import genai
-        return genai.Client(api_key=key), model_name, ''
+        from google.genai import types
+        # A request that takes longer than 90 s raises an error, so the rules answer instead.
+        client = genai.Client(api_key=key, http_options=types.HttpOptions(timeout=90_000))
+        return client, model_name, ''
     except Exception as exc:
         return None, model_name, f'could not start the Gemini client ({type(exc).__name__})'
 

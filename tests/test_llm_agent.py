@@ -129,3 +129,10 @@ def test_retired_model_switches_to_newest_flash(model):
                                 model_name='old-model')
     assert 'gemini-3.8-flash; configured model old-model was not available' in out['mode']
     assert client.requests[-1]['model'] == 'gemini-3.8-flash'
+
+def test_whole_number_rounding_is_accepted():
+    # Regression: the live model wrote "about 70%" for a 70.68% share and was rejected.
+    log = [{'arguments': {}, 'result': {'value': {'share_of_total_pct': 70.68}}}]
+    assert agent.unsupported_numbers('Website had about 70% of revenue', log, '') == []
+    assert agent.unsupported_numbers('Website had about 75% of revenue', log, '') == ['75']
+    assert agent.unsupported_numbers('Website had 70% of revenue', log, '') == ['70']   # not marked approximate
