@@ -7,3 +7,6 @@ __pycache__/
 
 # Local reference material for Claude, not part of the app
 docs/
+
+# Generated test copy of Sales (rebuild with validation/make_plus1000.py)
+validation/Sales_plus1000.txt
