@@ -45,11 +45,18 @@ annual chart, the SH01 Orlando bar on the store chart, and the Beans bar on the 
 
 ## Results
 
+Run on the live app on 2026-11-10 by uploading `Sales_plus1000.txt` into the Sales box, with no code change and no restart.
+Every measure in the prediction table matched its predicted value: the +1,000 rows rose by exactly 1,000 and the rows
+predicted not to change stayed the same.
+
 | Item | Entry |
 |---|---|
-| Actual total revenue after change | |
-| Chart that should change, and what you saw | |
-| Filter combinations checked (changed / unchanged) | |
-| Code changes required? | |
-| Restart required? | |
-| Original data restored? | |
+| Actual total revenue after change | $42,175,440.00 (as predicted, +$1,000.00) |
+| Chart that should change, and what you saw | The June 2027 Brick & Mortar point (monthly), 2027 Brick & Mortar bar (annual), SH01 Orlando bar (store) and Beans bar (category) rose by $1,000. Website, SH08 Orlando and the other categories did not change. |
+| Filter combinations checked (changed / unchanged) | 2027 + SH01 Orlando + Beans: $18,400 → $19,400 (changed, as predicted). 2027 + Website: $5,931,010 (unchanged, as predicted). |
+| Code changes required? | No |
+| Restart required? | No. The cache is keyed on the uploaded file's bytes, so the new file was recalculated immediately. |
+| Original data restored? | Yes. Removing the upload returned the app to `data/Sales.txt`, with a total of $42,174,440.00. `data/Sales.txt` itself was never edited. |
+
+The same check is automated in `tests/test_model.py::test_adding_1000_to_one_row_adds_exactly_1000`.
+The assistant before/after question is still to do, once the assistant has revenue tools (agent Test 5).

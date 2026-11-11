@@ -58,7 +58,10 @@ Survey Analysis page (scatter of Satisfaction vs Revenue by Survey ID, store tab
   reboot to pick up a push). Step 4 done: Dashboard tab with Year/Store/Category/Channel multiselects (options from
   data), scope line, KPIs per channel, 4 charts (annual by channel, monthly by channel, by store, by category) and
   a numbers expander. Check: 2028 Website = $6,339,640 (240 rows) matches raw-file sum.
-  **Next: step 5, verify upload path in the browser; then step 7 $1,000 test (needs a modified Sales copy).**
+- 2026-11-10: Steps 5 and 7 done. $1,000 test on row S0120270601 (260 → 1,260) passed on the live app (reported by the user);
+  record in `validation/modified_data_test.md`. Live app needs a manual reboot after each push (auto-redeploy not firing).
+  **Next: step 8, ≥3 tool-contract functions in analytics.py (replace the starter's generic get_total/group_total).**
+  Still owed: Power BI numbers from the user for the validation table; assistant before/after question for agent Test 5.
 
 ## Build plan (Project Guide order)
 1. Checkpoint 0: repo from `jmmcallister/epresso-starter` template, deployed on Streamlit Community Cloud.
