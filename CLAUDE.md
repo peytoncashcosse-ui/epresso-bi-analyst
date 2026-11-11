@@ -66,7 +66,12 @@ Survey Analysis page (scatter of Satisfaction vs Revenue by Survey ID, store tab
   Dispatcher `agent.run_tool(name, args, model, log)` catches tool exceptions. Tests in tests/test_analytics.py (35 total).
   Real-data facts: Website +121.6% 2025→2029, Brick & Mortar −45.8%, every physical store declined; satisfaction vs
   revenue r = 0.235 (weak, n = 100 store-years, SH00 excluded).
-  **Next: step 9, rules-based router covering all tools + Findings/Interpretation/Next steps answers.**
+- 2026-11-10: Step 9 done. `agent.rules_router` → {'kind','calls','decline'}; `extract_params` reads years/store/
+  category/channel using loaded values; profit + forecast questions declined with no tool call; judgment questions
+  ("should…close") get evidence + NO_RECOMMENDATION. Answers = Scope / Findings / Interpretation / Next steps +
+  tool log; scope says dashboard filters are not applied and names the Sales source (for Test 5). 53 tests.
+  Fix+retest recorded in validation/agent_tests.md (weather-in-Denver → revenue bug).
+  **Next: step 10, Gemini function-calling router (needs the user's API key in Streamlit Secrets), fallback to rules.**
   Still owed: Power BI numbers from the user for the validation table; assistant before/after question for agent Test 5.
 
 ## Build plan (Project Guide order)

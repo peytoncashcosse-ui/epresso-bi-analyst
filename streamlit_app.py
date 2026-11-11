@@ -179,26 +179,50 @@ with tab_dash:
                 {'Revenue': '${:,.2f}', 'MonthStart': '{:%Y-%m}'}), hide_index=True)
 
 # ------------------------------------------------------------------ assistant
+def show_answer(answer: dict):
+    """Scope first, then Findings (from tool results only), Interpretation, Next steps,
+    and the raw tool-call log underneath."""
+    st.markdown(f"**Scope:** {answer['scope']}")
+    st.markdown('**Findings** (calculated by the tools)')
+    st.markdown('\n'.join(f'- {line}' for line in answer['findings']))
+    if answer['interpretation']:
+        st.markdown('**Interpretation**')
+        st.markdown('\n'.join(f'- {line}' for line in answer['interpretation']))
+    st.markdown('**Next steps**')
+    st.markdown('\n'.join(f'- {line}' for line in answer['next_steps']))
+    st.caption(f"Answered by: {answer['mode']}")
+    with st.expander(f"Tool-call log ({len(answer['tool_log'])} call(s))"):
+        if answer['tool_log']:
+            st.json(answer['tool_log'])
+        else:
+            st.write('No tool was called for this question.')
+
+
 with tab_assistant:
-    st.caption('Mode: rules-based starter. Describe what you actually built here.')
+    st.caption('Mode: rules-based assistant (Option B). Keyword rules pick one of eight approved '
+               'analytical functions and its parameters; the function calculates the answer from '
+               'the currently loaded data. No AI-written code is ever run.')
     st.session_state.setdefault('n_questions', 0)
     st.session_state.setdefault('history', [])
+    remaining = MAX_QUESTIONS - st.session_state['n_questions']
+    st.caption(f'Questions left this session: {remaining} of {MAX_QUESTIONS}.')
+    with st.expander('What can I ask?'):
+        st.markdown('\n'.join(f'- {c}' for c in agent.CAPABILITIES))
     for item in st.session_state['history']:
         with st.chat_message('user'):
             st.write(item['question'])
         with st.chat_message('assistant'):
-            st.markdown(f"**Scope:** {item['answer']['scope']}")
-            st.markdown(f"**Findings:** {item['answer']['findings']}")
-            if item['answer']['interpretation']:
-                st.markdown(f"**Interpretation:** {item['answer']['interpretation']}")
-            with st.expander('Tool-call log'):
-                st.json(item['answer']['tool_log'])
+            show_answer(item['answer'])
     question = st.chat_input('Ask a question about the loaded data')
     if question:
         if st.session_state['n_questions'] >= MAX_QUESTIONS:
-            st.warning('Question limit reached for this session. Reload the page to start over.')
+            st.warning(f'You have reached the limit of {MAX_QUESTIONS} questions for this session. '
+                       'Reload the page to start a new session.')
         else:
             st.session_state['n_questions'] += 1
-            answer = agent.answer_question(question, model, mode='rules')
+            active = {k: v for k, v in selections.items() if v}
+            answer = agent.answer_question(
+                question, model, mode='rules', data_note=sources['Sales'],
+                dashboard_scope=analytics.describe_scope(active) if active else '')
             st.session_state['history'].append({'question': question, 'answer': answer})
             st.rerun()

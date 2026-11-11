@@ -206,4 +206,69 @@ def test_every_tool_follows_the_contract(model):
 
 def test_unsupported_question(model):
     out = agent.answer_question('What is the meaning of life?', model)
-    assert 'cannot answer' in out['findings']
+    assert 'cannot answer' in out['findings'][0] and out['tool_log'] == []
+
+
+# ------------------------------------------------------------------ router
+@pytest.mark.parametrize('question, tool, args', [
+    ('How much revenue did the website generate in 2026?', 'get_total_revenue',
+     {'year': 2026, 'channel': 'Website'}),
+    ('Which store experienced the greatest percentage revenue decline?', 'get_growth', {'by': 'store'}),
+    ('Which sales channel experienced the greatest revenue growth?', 'get_growth', {'by': 'channel'}),
+    ('Which category grew most between 2025 and 2026?', 'get_growth',
+     {'by': 'category', 'start_year': 2025, 'end_year': 2026}),
+    ('Does higher customer satisfaction cause higher revenue?', 'get_satisfaction_vs_revenue', {}),
+    ('Compare website vs brick and mortar revenue in 2025', 'get_revenue_by_channel', {'year': 2025}),
+    ('Show revenue by year for B1', 'get_revenue_by_year', {'store': 'B1'}),
+    ('What are the busiest months?', 'get_monthly_revenue', {}),
+    ('Rank the product categories', 'get_category_performance', {}),
+    ('Are there missing values in the data?', 'get_data_quality_report', {}),
+    ('How much did we sell of syrup?', 'get_total_revenue', {'category': 'Syrups'}),
+])
+def test_router_picks_tool_and_arguments(model, question, tool, args):
+    routed = agent.rules_router(question, model)
+    assert routed['calls'][0] == (tool, args)
+
+
+def test_profit_question_is_declined_without_a_number(model):
+    out = agent.answer_question('Which E-Presso store is the most profitable?', model)
+    assert out['kind'] == 'profit' and out['tool_log'] == []
+    assert 'no costs' in out['findings'][0]
+    assert 'No recommendation is supported' in out['next_steps'][0]
+
+
+def test_judgment_question_gives_evidence_but_no_recommendation(model):
+    out = agent.answer_question('Should E-Presso close the B2 store?', model)
+    assert [c['tool'] for c in out['tool_log']] == ['get_revenue_by_year', 'get_growth']
+    assert 'No recommendation is supported' in out['next_steps'][0]
+
+
+def test_ambiguous_city_returns_the_tool_error(model):
+    out = agent.answer_question('How much revenue did Orlando make?', model)
+    assert 'more than one store' in out['findings'][0]
+
+
+def test_answer_states_scope_and_ignores_dashboard_filters(model):
+    out = agent.answer_question('Total revenue in 2025?', model, data_note='Uploaded: x.txt',
+                                dashboard_scope='Year: 2026')
+    assert out['scope'].startswith('year: 2025') and 'Uploaded: x.txt' in out['scope']
+    assert 'not** applied' in out['scope'] and 'Year: 2026' in out['scope']
+    assert '$400.00' in out['findings'][0]
+
+
+def test_answer_changes_when_data_changes(model):
+    before = agent.answer_question('What is total revenue?', model)['findings'][0]
+    model['fact'].loc[model['fact']['Sales ID'] == 'S1', 'Revenue'] += 1000
+    after = agent.answer_question('What is total revenue?', model)['findings'][0]
+    assert '$1,000.00' in before and '$2,000.00' in after
+
+
+def test_store_name_alone_is_not_a_revenue_question(model):
+    # Regression: "weather in <city>" used to return that store's revenue.
+    out = agent.answer_question('What is the weather in Orlando?', model)
+    assert out['kind'] == 'unsupported' and out['tool_log'] == []
+
+
+def test_error_answer_does_not_claim_a_scope(model):
+    out = agent.answer_question('How much revenue in 2031?', model)
+    assert out['scope'].startswith('not calculated')
