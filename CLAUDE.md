@@ -81,8 +81,12 @@ Survey Analysis page (scatter of Satisfaction vs Revenue by Survey ID, store tab
   404 auto-switch to the newest flash (`newest_flash_model`). The number check accepts hedged approximations ("about
   70%") within 3%. 90 s timeout. Charts use width='stretch'. Answers take about 25–60 s. The live app still needs a
   manual reboot after each push (Claude can do it: Manage app → ⋮ → Reboot app → Reboot).
-  **Next: step 11 (five agent tests run live in Gemini mode, validation table with the user's Power BI numbers,
-  reflection 300–500 words, contribution statement, README).**
+- 2026-11-11: Validation table DONE (`validation/validation_table.md`): all six measures match Power BI (total,
+  website, B&M, yearly, monthly, Espresso Machines). Values were read off by the user from Power BI Desktop.
+  **Remaining (due Sun Nov 15):** (1) five agent tests live in Gemini mode + screenshots of tool-call logs (Test 5 =
+  upload validation/Sales_plus1000.txt, ask the same question before/after, then restore); the user hasn't chosen
+  whether Claude runs them in the browser or the user does; (2) final README; (3) reflection 300–500 words;
+  (4) solo contribution statement. The formatting prompt tweak (b6b3398) is pushed but needs an app reboot.
   Still owed: Power BI numbers from the user for the validation table; assistant before/after question for agent Test 5.
 
 ## Build plan (Project Guide order)
