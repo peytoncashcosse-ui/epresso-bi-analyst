@@ -245,7 +245,8 @@ def build_model(tables: dict[str, pd.DataFrame]) -> dict:
     # A blank channel or category gets an explicit label so it can still be filtered.
     fact['Channel'] = fact['Channel'].fillna('(missing)')
     fact['Category'] = fact['Category'].fillna('(missing)')
-    return {'fact': fact, 'survey': survey, 'merge_checks': checks, 'issues': issues}
+    return {'fact': fact, 'survey': survey, 'merge_checks': checks, 'issues': issues,
+            'tables': tables}
 
 
 def total_revenue(fact: pd.DataFrame) -> float:
@@ -310,77 +311,350 @@ def _error(tool: str, message: str, scope: dict | None = None) -> ToolResult:
                       rows_used=0, caveats=[], error=message)
 
 
-def _apply_filters(df: pd.DataFrame, filters: dict | None):
-    """Validate filters against the LOADED data, then apply them."""
-    for col, wanted in (filters or {}).items():
-        if col not in df.columns:
-            return df, f'Unknown column: {col}'
-        wanted_list = list(wanted) if isinstance(wanted, (list, tuple, set)) else [wanted]
-        valid = set(df[col].dropna().unique())
-        bad = [w for w in wanted_list if w not in valid]
-        if bad:
-            examples = sorted(map(str, valid))[:20]
-            return df, f'{bad} not found in column {col}. Valid values include: {examples}'
-        df = df[df[col].isin(wanted_list)]
-    return df, None
+PROFIT_CAVEAT = ('Revenue is not profit: the data has no costs, expenses or margins, '
+                 'so it cannot show which store, product or channel is profitable.')
+GROWTH_DIMENSIONS = {'store': 'Store Label', 'channel': 'Channel', 'category': 'Category'}
+MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct',
+               'Nov', 'Dec']
+
+
+def _is_all(value) -> bool:
+    """None, '', 'all' or 'any' all mean 'do not filter on this'."""
+    return value is None or str(value).strip().lower() in ('', 'all', 'any', 'none')
+
+
+def _match(fact: pd.DataFrame, columns: list[str], wanted, label: str):
+    """Find the requested value among the values in the LOADED data, ignoring case.
+    Tries each column in turn (e.g. a category can be given by name or by ID) and
+    returns (value_in_first_column, None) or (None, error message listing valid values)."""
+    w = str(wanted).strip().lower()
+    for col in columns:
+        rows = fact.loc[fact[col].astype(str).str.lower() == w, columns[0]].dropna().unique()
+        if len(rows) == 1:
+            return rows[0], None
+    valid = sorted(map(str, fact[columns[0]].dropna().unique()))
+    return None, f'Unknown {label} "{wanted}". Values in the loaded data: {valid}.'
+
+
+def _match_store(fact: pd.DataFrame, wanted):
+    """A store can be given as its ID ('SH01'), its label ('SH01 Orlando') or its city,
+    but a city that has more than one store (Orlando) is an error, not a guess."""
+    stores = fact[['Store ID', 'Store Label', 'City']].drop_duplicates()
+    w = str(wanted).strip().lower()
+    for col in ('Store ID', 'Store Label'):
+        hit = stores[stores[col].astype(str).str.lower() == w]
+        if len(hit) == 1:
+            return hit['Store Label'].iloc[0], None
+    hit = stores[stores['City'].fillna('').str.lower() == w]
+    if len(hit) == 1:
+        return hit['Store Label'].iloc[0], None
+    if len(hit) > 1:
+        return None, (f'"{wanted}" matches more than one store: {sorted(hit["Store Label"])}. '
+                      'Name one store by its ID.')
+    return None, f'Unknown store "{wanted}". Stores in the loaded data: {sorted(stores["Store Label"])}.'
+
+
+def _subset(fact: pd.DataFrame, year=None, store=None, category=None, channel=None):
+    """Check every parameter against the loaded data, then keep the matching rows.
+    Returns (rows, scope, error). Scope says in words what the numbers cover."""
+    scope = {'year': 'All', 'store': 'All', 'category': 'All', 'channel': 'All'}
+    out = fact
+    checks = (('year', year, ['Year'], 'year'),
+              ('category', category, ['Category', 'Category ID'], 'category'),
+              ('channel', channel, ['Channel'], 'channel'))
+    for key, wanted, cols, label in checks:
+        if _is_all(wanted):
+            continue
+        value, err = _match(fact, cols, wanted, label)
+        if err:
+            return None, scope, err
+        scope[key] = value if key != 'year' else int(value)
+        out = out[out[cols[0]] == value]
+    if not _is_all(store):
+        label, err = _match_store(fact, store)
+        if err:
+            return None, scope, err
+        scope['store'] = label
+        out = out[out['Store Label'] == label]
+    return out, scope, None
+
+
+def _revenue_caveats(rows: pd.DataFrame) -> list[str]:
+    caveats = [PROFIT_CAVEAT]
+    n_missing = int(rows['Revenue'].isna().sum())
+    if n_missing:
+        caveats.append(f'{n_missing} sales row(s) in scope have blank or non-numeric revenue '
+                       'and were left out.')
+    if rows.empty:
+        caveats.append('No sales rows match this scope, so the result is empty.')
+    return caveats
+
+
+def _money(x) -> float:
+    return round(float(x), 2)
+
+
+def _pct(part, whole):
+    return round(float(part) / float(whole) * 100, 2) if whole else None
 
 
 # ------------------------------------------------------ analytical tools
-def get_total(df: pd.DataFrame, value_col: str, filters: dict | None = None) -> ToolResult:
-    """Sum of one numeric column, optionally filtered. EXAMPLE tool: replace the
-    generic column names with your own definition of revenue."""
-    name = 'get_total'
-    if value_col not in df.columns:
-        return _error(name, f'Unknown column: {value_col}')
-    subset, err = _apply_filters(df, filters)
+def get_total_revenue(model: dict, year=None, store=None, category=None,
+                      channel=None) -> ToolResult:
+    """Total revenue for one scope, e.g. 'website, 2028' or 'SH05, Beans'."""
+    name = 'get_total_revenue'
+    rows, scope, err = _subset(model['fact'], year, store, category, channel)
     if err:
-        return _error(name, err, {'filters': filters})
-    values = pd.to_numeric(subset[value_col], errors='coerce')
-    n_bad = int(values.isna().sum())
-    caveats = ['This is a sum of the chosen column. Revenue is not profit.']
-    if n_bad:
-        caveats.append(f'{n_bad} row(s) had a missing or non-numeric {value_col} and were excluded.')
-    return ToolResult(tool=name, value=float(values.sum()), definition=f'Sum of {value_col}',
-                      scope={'filters': filters or 'none (all rows)'},
-                      rows_used=int(values.notna().sum()), caveats=caveats)
+        return _error(name, err, scope)
+    return ToolResult(
+        tool=name, value=_money(rows['Revenue'].sum()),
+        definition='Sum of the stored Revenue column over the Sales rows in scope '
+                   '(one row = one product at one store in one month).',
+        scope=scope, rows_used=int(rows['Revenue'].notna().sum()),
+        caveats=_revenue_caveats(rows))
 
 
-def group_total(df: pd.DataFrame, value_col: str, group_col: str,
-                filters: dict | None = None) -> ToolResult:
-    """Sum of one numeric column by group (store, channel, year, ...)."""
-    name = 'group_total'
-    for col in (value_col, group_col):
-        if col not in df.columns:
-            return _error(name, f'Unknown column: {col}')
-    subset, err = _apply_filters(df, filters)
+def get_revenue_by_channel(model: dict, year=None, store=None, category=None) -> ToolResult:
+    """Website vs Brick & Mortar revenue, each with its share of the scope's total."""
+    name = 'get_revenue_by_channel'
+    rows, scope, err = _subset(model['fact'], year, store, category)
     if err:
-        return _error(name, err, {'filters': filters})
-    work = subset.assign(**{value_col: pd.to_numeric(subset[value_col], errors='coerce')})
-    n_bad = int(work[value_col].isna().sum())
-    n_nogroup = int(work[group_col].isna().sum())
-    grouped = work.dropna(subset=[value_col, group_col]).groupby(group_col)[value_col].sum()
-    caveats = ['Sums of the chosen column. Revenue is not profit.']
-    if n_bad:
-        caveats.append(f'{n_bad} row(s) with missing or non-numeric {value_col} were excluded.')
-    if n_nogroup:
-        caveats.append(f'{n_nogroup} row(s) with a missing {group_col} were excluded.')
-    return ToolResult(tool=name, value={str(k): float(v) for k, v in grouped.items()},
-                      definition=f'Sum of {value_col} by {group_col}',
-                      scope={'filters': filters or 'none (all rows)'},
-                      rows_used=int(len(work) - n_bad - n_nogroup), caveats=caveats)
+        return _error(name, err, scope)
+    total = rows['Revenue'].sum()
+    by = rows.groupby('Channel')['Revenue'].sum().sort_values(ascending=False)
+    value = {str(ch): {'revenue': _money(v), 'share_of_total_pct': _pct(v, total)}
+             for ch, v in by.items()}
+    return ToolResult(
+        tool=name, value={'channels': value, 'total_revenue': _money(total)},
+        definition='Sum of Revenue by sales channel (Stores.StoreType). Share = channel '
+                   'revenue / total revenue of all channels in the same scope.',
+        scope=scope, rows_used=int(rows['Revenue'].notna().sum()),
+        caveats=_revenue_caveats(rows))
 
 
-def data_quality_report(df: pd.DataFrame) -> ToolResult:
-    """Row count, duplicate rows, and missing values per column."""
-    missing = {c: int(n) for c, n in df.isna().sum().items() if n > 0}
-    caveats = []
+def get_revenue_by_year(model: dict, store=None, category=None, channel=None) -> ToolResult:
+    """Revenue for each year with the % change from the year before."""
+    name = 'get_revenue_by_year'
+    rows, scope, err = _subset(model['fact'], None, store, category, channel)
+    if err:
+        return _error(name, err, scope)
+    by = rows.dropna(subset=['Year']).groupby('Year')['Revenue'].sum().sort_index()
+    value, prev = {}, None
+    for yr, v in by.items():
+        value[str(int(yr))] = {'revenue': _money(v),
+                               'change_vs_prior_year_pct': _pct(v - prev, prev) if prev else None}
+        prev = v
+    caveats = _revenue_caveats(rows)
+    months = rows.dropna(subset=['Year']).groupby('Year')['Month'].nunique()
+    partial = [int(y) for y, n in months.items() if n < 12]
+    if partial:
+        caveats.append(f'Year(s) {partial} have fewer than 12 months of data, so their totals '
+                       'are not comparable with full years.')
+    no_date = int(rows['Year'].isna().sum())
+    if no_date:
+        caveats.append(f'{no_date} row(s) without a valid date are not in any year.')
+    return ToolResult(
+        tool=name, value=value,
+        definition='Sum of Revenue by calendar year of the Sales Date. Change = (this year - '
+                   'prior year) / prior year x 100.',
+        scope=scope, rows_used=int(rows.dropna(subset=['Year'])['Revenue'].notna().sum()),
+        caveats=caveats)
+
+
+def get_growth(model: dict, by='store', start_year=None, end_year=None, category=None,
+               channel=None) -> ToolResult:
+    """Compare each store, channel or category between two years: which grew or declined most."""
+    name = 'get_growth'
+    fact = model['fact']
+    if str(by).lower() not in GROWTH_DIMENSIONS:
+        return _error(name, f'"by" must be one of {list(GROWTH_DIMENSIONS)}, not "{by}".')
+    col = GROWTH_DIMENSIONS[str(by).lower()]
+    years = sorted(int(y) for y in fact['Year'].dropna().unique())
+    if not years:
+        return _error(name, 'The loaded data has no valid dates.')
+    picked = []
+    for wanted, default in ((start_year, years[0]), (end_year, years[-1])):
+        if _is_all(wanted):
+            picked.append(default)
+            continue
+        value, err = _match(fact, ['Year'], wanted, 'year')
+        if err:
+            return _error(name, err)
+        picked.append(int(value))
+    start, end = picked
+    if start >= end:
+        return _error(name, f'start_year ({start}) must be earlier than end_year ({end}).')
+    rows, scope, err = _subset(fact, None, None, category, channel)
+    if err:
+        return _error(name, err, scope)
+    scope.update({'compared': f'{start} vs {end}', 'by': str(by).lower()})
+
+    table = rows[rows['Year'].isin([start, end])].pivot_table(
+        index=col, columns='Year', values='Revenue', aggfunc='sum')
+    groups = []
+    for group, r in table.iterrows():
+        a, b = r.get(start), r.get(end)
+        a = None if pd.isna(a) else float(a)
+        b = None if pd.isna(b) else float(b)
+        groups.append({
+            'group': str(group),
+            f'revenue_{start}': None if a is None else _money(a),
+            f'revenue_{end}': None if b is None else _money(b),
+            'change': None if a is None or b is None else _money(b - a),
+            'change_pct': None if a is None or b is None else _pct(b - a, a),
+        })
+    comparable = [g for g in groups if g['change_pct'] is not None]
+    comparable.sort(key=lambda g: g['change_pct'], reverse=True)
+    declined = [g for g in comparable if g['change'] < 0]
+    caveats = _revenue_caveats(rows)
+    caveats.append(f'Compares the two years {start} and {end} only; years in between are not used.')
+    if not declined and comparable:
+        caveats.append(f'No {by} declined from {start} to {end}. The smallest change was '
+                       f'{comparable[-1]["group"]} at {comparable[-1]["change_pct"]}%.')
+    missing = [g['group'] for g in groups if g['change_pct'] is None]
     if missing:
-        caveats.append('Missing values may limit conclusions drawn from those columns.')
-    return ToolResult(tool='data_quality_report',
-                      value={'rows': len(df), 'duplicate_rows': int(df.duplicated().sum()),
-                             'columns_with_missing': missing},
-                      definition='Counts of duplicate rows and missing values in the loaded table',
-                      scope={'filters': 'none (full table)'}, rows_used=len(df), caveats=caveats)
+        caveats.append(f'{missing} lack revenue in one of the two years (or it was 0), '
+                       'so no % change is given for them.')
+    return ToolResult(
+        tool=name,
+        value={'groups_ranked_by_change_pct': comparable,
+               'largest_increase': comparable[0]['group'] if comparable and comparable[0]['change'] > 0 else None,
+               'largest_decline': declined[-1]['group'] if declined else None,
+               'number_declined': len(declined),
+               'not_comparable': missing},
+        definition=f'For each {by}: revenue in {end} minus revenue in {start}, and that change '
+                   f'as a % of {start} revenue.',
+        scope=scope, rows_used=int(rows[rows['Year'].isin([start, end])]['Revenue'].notna().sum()),
+        caveats=caveats)
+
+
+def get_monthly_revenue(model: dict, year=None, store=None, category=None,
+                        channel=None) -> ToolResult:
+    """Revenue for each calendar month and its share of the year (or all years) in scope."""
+    name = 'get_monthly_revenue'
+    rows, scope, err = _subset(model['fact'], year, store, category, channel)
+    if err:
+        return _error(name, err, scope)
+    dated = rows.dropna(subset=['Month'])
+    total = dated['Revenue'].sum()
+    by = dated.groupby('Month')['Revenue'].sum().sort_index()
+    months = [{'month': MONTH_NAMES[int(m) - 1], 'revenue': _money(v),
+               'share_pct': _pct(v, total)} for m, v in by.items()]
+    period = f'year {scope["year"]}' if scope['year'] != 'All' else 'all years combined'
+    value = {'months': months}
+    if months:
+        value['highest_month'] = max(months, key=lambda m: m['revenue'])['month']
+        value['lowest_month'] = min(months, key=lambda m: m['revenue'])['month']
+    return ToolResult(
+        tool=name, value=value,
+        definition=f'Sum of Revenue by calendar month ({period}). Share = month revenue / '
+                   f'total revenue of the same scope ({period}) x 100.',
+        scope=scope, rows_used=int(dated['Revenue'].notna().sum()),
+        caveats=_revenue_caveats(rows))
+
+
+def get_category_performance(model: dict, year=None, store=None, channel=None) -> ToolResult:
+    """Product categories ranked by revenue, with each one's share."""
+    name = 'get_category_performance'
+    rows, scope, err = _subset(model['fact'], year, store, None, channel)
+    if err:
+        return _error(name, err, scope)
+    total = rows['Revenue'].sum()
+    by = rows.groupby('Category')['Revenue'].sum().sort_values(ascending=False)
+    value = [{'rank': i + 1, 'category': str(c), 'revenue': _money(v),
+              'share_pct': _pct(v, total)} for i, (c, v) in enumerate(by.items())]
+    return ToolResult(
+        tool=name, value={'categories': value, 'total_revenue': _money(total)},
+        definition='Sum of Revenue by product category (via Sales.Category ID). Share = category '
+                   'revenue / total revenue in the same scope x 100.',
+        scope=scope, rows_used=int(rows['Revenue'].notna().sum()),
+        caveats=_revenue_caveats(rows))
+
+
+def _strength(r) -> str:
+    """Common rule of thumb for the size of a correlation coefficient."""
+    if r is None or pd.isna(r):
+        return 'not available'
+    a = abs(r)
+    size = 'negligible' if a < 0.1 else 'weak' if a < 0.3 else 'moderate' if a < 0.5 else 'strong'
+    return f'{size} {"positive" if r > 0 else "negative"}' if size != 'negligible' else size
+
+
+def get_satisfaction_vs_revenue(model: dict, year=None) -> ToolResult:
+    """How store revenue lines up with survey Satisfaction and Interest, one point per store-year."""
+    name = 'get_satisfaction_vs_revenue'
+    fact, survey = model['fact'], model['survey']
+    scope = {'year': 'All', 'unit': 'one store in one year'}
+    if not _is_all(year):
+        value, err = _match(fact, ['Year'], year, 'year')
+        if err:
+            return _error(name, err, scope)
+        scope['year'] = int(value)
+        fact = fact[fact['Year'] == value]
+        survey = survey[survey['Year'] == value]
+    # Bring revenue UP to the survey's grain (store-year) before joining.
+    revenue = fact.groupby('StoreYear')['Revenue'].sum().rename('Revenue').reset_index()
+    survey = survey.drop_duplicates(subset='Survey ID')
+    pairs = survey.merge(revenue, left_on='Survey ID', right_on='StoreYear', how='left')
+    no_score = pairs[pairs['Satisfaction'].isna()]['Survey ID'].tolist()
+    no_sales = pairs[pairs['Revenue'].isna()]['Survey ID'].tolist()
+    usable = pairs.dropna(subset=['Satisfaction', 'Revenue'])
+    caveats = ['Correlation is not causation: a link between satisfaction and revenue does not show '
+               'that one causes the other. Store size, location and market may drive both.',
+               PROFIT_CAVEAT]
+    if no_score:
+        caveats.append(f'{len(no_score)} store-year(s) have no satisfaction score and were left out '
+                       f'(not treated as 0): {no_score[:10]}{" ..." if len(no_score) > 10 else ""}.')
+    if no_sales:
+        caveats.append(f'{len(no_sales)} surveyed store-year(s) have no sales rows: {no_sales[:10]}.')
+    if len(usable) < 3:
+        return _error(name, f'Only {len(usable)} store-year(s) have both a score and revenue; '
+                            'at least 3 are needed to measure a relationship.', scope)
+    r_sat = usable['Satisfaction'].corr(usable['Revenue'])
+    r_int = usable['Interest'].corr(usable['Revenue']) if usable['Interest'].notna().sum() >= 3 else None
+    caveats.append(f'Based on {len(usable)} store-years, a small sample; one survey score per store per year.')
+    top = usable.nlargest(1, 'Satisfaction').iloc[0]
+    low = usable.nsmallest(1, 'Satisfaction').iloc[0]
+    return ToolResult(
+        tool=name,
+        value={'store_years_compared': int(len(usable)),
+               'correlation_satisfaction_revenue': round(float(r_sat), 3),
+               'satisfaction_relationship': _strength(r_sat),
+               'correlation_interest_revenue': None if r_int is None else round(float(r_int), 3),
+               'interest_relationship': _strength(r_int),
+               'highest_satisfaction': {'store_year': top['Survey ID'], 'satisfaction': float(top['Satisfaction']),
+                                        'revenue': _money(top['Revenue'])},
+               'lowest_satisfaction': {'store_year': low['Survey ID'], 'satisfaction': float(low['Satisfaction']),
+                                       'revenue': _money(low['Revenue'])}},
+        definition='Pearson correlation between survey Satisfaction (0-5) and that store\'s total '
+                   'Revenue in the same year, across store-years; same for Interest (0-100). '
+                   'Revenue is summed to store-year first so each survey row is used once.',
+        scope=scope, rows_used=int(len(usable)), caveats=caveats)
+
+
+def get_data_quality_report(model: dict) -> ToolResult:
+    """Problems found in the loaded data: blanks, unmatched keys, join checks, duplicates."""
+    tables = model.get('tables', {})
+    keys = {'sales': 'Sales ID', 'products': 'Product ID', 'categories': 'Category ID',
+            'stores': 'ID', 'survey': 'Survey ID'}
+    blanks = {t: blank_report(df, keys.get(t, df.columns[0])) for t, df in tables.items()}
+    value = {
+        'sales_rows': int(len(model['fact'])),
+        'issues_found': model['issues'] or ['None: every Sales row has a valid date and revenue, '
+                                            'every key matches a lookup table, no join changed revenue.'],
+        'merge_checks': [{k: c[k] for k in ('merge', 'rows_before', 'rows_after', 'sum_before',
+                                            'sum_after', 'changed')} for c in model['merge_checks']],
+        'blank_values': {t: b for t, b in blanks.items() if b},
+        'duplicate_rows': {t: int(df.duplicated().sum()) for t, df in tables.items()},
+    }
+    return ToolResult(
+        tool='get_data_quality_report', value=value,
+        definition='Checks run on the currently loaded files: blank cells by table and column, '
+                   'fully duplicated rows, Sales keys missing from lookup tables, and row/revenue '
+                   'counts before and after every join.',
+        scope={'data': 'all loaded tables, no filters'}, rows_used=int(len(model['fact'])),
+        caveats=['Blank survey scores mean "not surveyed", not a score of 0.'] if 'survey' in blanks
+        and blanks['survey'] else [])
 
 
 # ------------------------------------------------------------ merge check

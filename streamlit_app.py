@@ -199,6 +199,6 @@ with tab_assistant:
             st.warning('Question limit reached for this session. Reload the page to start over.')
         else:
             st.session_state['n_questions'] += 1
-            answer = agent.answer_question(question, fact, mode='rules')
+            answer = agent.answer_question(question, model, mode='rules')
             st.session_state['history'].append({'question': question, 'answer': answer})
             st.rerun()

@@ -60,7 +60,13 @@ Survey Analysis page (scatter of Satisfaction vs Revenue by Survey ID, store tab
   a numbers expander. Check: 2028 Website = $6,339,640 (240 rows) matches raw-file sum.
 - 2026-11-10: Steps 5 and 7 done. $1,000 test on row S0120270601 (260 → 1,260) passed on the live app (reported by the user);
   record in `validation/modified_data_test.md`. Live app needs a manual reboot after each push (auto-redeploy not firing).
-  **Next: step 8, ≥3 tool-contract functions in analytics.py (replace the starter's generic get_total/group_total).**
+- 2026-11-10: Step 8 done. 8 tools in analytics.py (get_total_revenue, get_revenue_by_channel, get_revenue_by_year,
+  get_growth, get_monthly_revenue, get_category_performance, get_satisfaction_vs_revenue, get_data_quality_report), all
+  take `model` + explicit params validated against loaded data (`_subset`, `_match`, `_match_store`; "Orlando" → error).
+  Dispatcher `agent.run_tool(name, args, model, log)` catches tool exceptions. Tests in tests/test_analytics.py (35 total).
+  Real-data facts: Website +121.6% 2025→2029, Brick & Mortar −45.8%, every physical store declined; satisfaction vs
+  revenue r = 0.235 (weak, n = 100 store-years, SH00 excluded).
+  **Next: step 9, rules-based router covering all tools + Findings/Interpretation/Next steps answers.**
   Still owed: Power BI numbers from the user for the validation table; assistant before/after question for agent Test 5.
 
 ## Build plan (Project Guide order)

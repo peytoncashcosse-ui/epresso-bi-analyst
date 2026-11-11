@@ -6,22 +6,50 @@ from __future__ import annotations
 import analytics
 from analytics import ToolResult
 
-# The ONLY things the assistant may do. Add your own tools here.
+# The ONLY things the assistant may do. Each entry: the function, the parameters it
+# accepts, and a description (later given to the language model to choose from).
 TOOLS = {
-    'get_total': {
-        'fn': analytics.get_total,
-        'params': {'value_col', 'filters'},
-        'description': 'Sum a numeric column, optionally filtered.',
+    'get_total_revenue': {
+        'fn': analytics.get_total_revenue,
+        'params': {'year', 'store', 'category', 'channel'},
+        'description': 'Total revenue for a scope (any mix of year, store, category, channel).',
     },
-    'group_total': {
-        'fn': analytics.group_total,
-        'params': {'value_col', 'group_col', 'filters'},
-        'description': 'Sum a numeric column by group (store, channel, year, ...).',
+    'get_revenue_by_channel': {
+        'fn': analytics.get_revenue_by_channel,
+        'params': {'year', 'store', 'category'},
+        'description': 'Website vs Brick & Mortar revenue and each one\'s share of the total.',
     },
-    'data_quality_report': {
-        'fn': analytics.data_quality_report,
+    'get_revenue_by_year': {
+        'fn': analytics.get_revenue_by_year,
+        'params': {'store', 'category', 'channel'},
+        'description': 'Revenue for each year with % change from the prior year.',
+    },
+    'get_growth': {
+        'fn': analytics.get_growth,
+        'params': {'by', 'start_year', 'end_year', 'category', 'channel'},
+        'description': 'Rank stores, channels or categories by revenue change between two years; '
+                       'names the largest increase and decline.',
+    },
+    'get_monthly_revenue': {
+        'fn': analytics.get_monthly_revenue,
+        'params': {'year', 'store', 'category', 'channel'},
+        'description': 'Revenue by calendar month and each month\'s share of the period total.',
+    },
+    'get_category_performance': {
+        'fn': analytics.get_category_performance,
+        'params': {'year', 'store', 'channel'},
+        'description': 'Product categories ranked by revenue with their shares.',
+    },
+    'get_satisfaction_vs_revenue': {
+        'fn': analytics.get_satisfaction_vs_revenue,
+        'params': {'year'},
+        'description': 'Correlation of survey satisfaction and interest with store revenue '
+                       '(store-year level). Association only, not causation.',
+    },
+    'get_data_quality_report': {
+        'fn': analytics.get_data_quality_report,
         'params': set(),
-        'description': 'Report duplicates and missing values in the loaded data.',
+        'description': 'Blanks, duplicates, unmatched keys and join checks in the loaded data.',
     },
 }
 
@@ -41,8 +69,10 @@ Rules:
 - Never ask for, run, or write code. Never modify data."""
 
 
-def run_tool(name: str, args: dict, df, log: list) -> ToolResult:
-    """The dispatcher: validate the request, run the function, log the call."""
+def run_tool(name: str, args: dict, model: dict, log: list) -> ToolResult:
+    """The dispatcher: check the tool name and arguments, run the function on the
+    loaded data, and log the call. A tool that crashes returns an error result
+    instead of breaking the app."""
     if name not in TOOLS:
         result = analytics._error(name, f'Unknown tool: {name}')
     else:
@@ -50,17 +80,22 @@ def run_tool(name: str, args: dict, df, log: list) -> ToolResult:
         if unexpected:
             result = analytics._error(name, f'Unexpected argument(s): {sorted(unexpected)}')
         else:
-            result = TOOLS[name]['fn'](df, **args)
+            try:
+                result = TOOLS[name]['fn'](model, **args)
+            except Exception as exc:  # report, never crash
+                result = analytics._error(name, f'The calculation failed: {exc}')
     log.append({'tool': name, 'arguments': args, 'result': result.to_dict()})
     return result
 
 
-def rules_router(question: str, df):
-    """Option B router. TODO: add rules for the tools YOU build.
+def rules_router(question: str, model: dict):
+    """Option B router (temporary: full rules come in the next step).
     Returns (tool_name, arguments) or None if the question is unsupported."""
     q = question.lower()
     if any(w in q for w in ('missing', 'duplicate', 'quality', 'blank')):
-        return 'data_quality_report', {}
+        return 'get_data_quality_report', {}
+    if 'revenue' in q or 'sales' in q:
+        return 'get_total_revenue', {}
     return None
 
 
@@ -76,14 +111,14 @@ def format_findings(result: ToolResult) -> str:
     return f'{result.definition}: {result.value}  (rows used: {result.rows_used})'
 
 
-def answer_question(question: str, df, mode: str = 'rules') -> dict:
+def answer_question(question: str, model: dict, mode: str = 'rules') -> dict:
     log: list = []
-    routed = rules_router(question, df) if mode == 'rules' else llm_router(question, df)
+    routed = rules_router(question, model) if mode == 'rules' else llm_router(question, model)
     if routed is None:
         return {'scope': 'n/a', 'findings': UNSUPPORTED, 'interpretation': '',
                 'next_steps': '', 'tool_log': log}
     name, args = routed
-    result = run_tool(name, args, df, log)
+    result = run_tool(name, args, model, log)
     return {
         'scope': str(result.scope),
         'findings': format_findings(result),
