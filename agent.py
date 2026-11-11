@@ -252,7 +252,8 @@ MAX_TOOL_ROUNDS = 4  # the model may ask for tools at most this many times per q
 
 ANSWER_FORMAT = """Answer in exactly this format, with nothing before it:
 FINDINGS:
-- one bullet per fact, each number copied exactly as it appears in a tool result
+- one bullet per fact, each number copied from a tool result; write money as $1,234,567.89
+  and percentages as 12.34%. Do not repeat the scope here; the app already shows it.
 INTERPRETATION:
 - what the findings may mean, cautiously; association is not causation
 NEXT STEPS:

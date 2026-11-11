@@ -24,7 +24,8 @@ Mode under test: **rules-based assistant (Option B)**. The language-model router
 | Problem 2 | Question: "How much revenue did the website generate in 2028?" Gemini called `get_total_revenue(year=2028, channel=Website)` and `get_revenue_by_channel(year=2028)`, and the tools returned $6,339,640.00 and a 70.68% share. Gemini wrote "about 70%", and the number check rejected it ("Number check FAILED for ['70']"), replacing the model's findings with the tool-written ones. |
 | Cause | The check only allowed ±0.5% or exact rounding, and 70.68 rounds to 71, not 70. An approximation marked by "about" is honest, not invented. |
 | Fix 2 | A number that follows an approximation word (about, around, roughly, nearly, ...) may be within 3% of a tool value. A number stated as exact still must match to rounding, so "70%" with no "about" is still rejected. Tests: `test_whole_number_rounding_is_accepted`. Also added a 90-second request timeout, because that answer took about a minute, and a hung request now falls back to the rules. |
-| Retest | See the next entry after the redeploy. |
+| Retest (live, after redeploy) | Same question. Gemini called `get_total_revenue` and `get_revenue_by_channel`. Its own findings were shown: website revenue in 2028 = 6339640, a 70.68% share of 8969470, with Brick & Mortar 2629830 (29.32%). Answered by: "Language-model agent (Option A, gemini-3.8-flash, function calling). Number check passed: every number matches a tool result." It also stated that revenue is not profit. **Pass.** |
+| Follow-up | Gemini printed money unformatted and repeated the scope inside Findings, so the answer-format prompt now asks for `$1,234,567.89` formatting and no scope in Findings. |
 
 ## Required tests (to be completed)
 

@@ -77,7 +77,12 @@ Survey Analysis page (scatter of Satisfaction vs Revenue by Survey ID, store tab
   failure findings are replaced by `findings_lines`. Any API error → `LLMUnavailable` → rules fallback with reason.
   Key from `st.secrets['GEMINI_API_KEY']` (set on Streamlit Cloud only; no local secrets.toml). Optional
   `GEMINI_MODEL` secret, default gemini-2.5-flash. Fake-client tests in tests/test_llm_agent.py (63 tests).
-  **Next: test Gemini on the live app after reboot; then step 11 (five agent tests, validation table, reflection, README).**
+- 2026-11-11: Gemini works live. gemini-2.5-flash was 404 for new users → default now gemini-3.8-flash, plus a
+  404 auto-switch to the newest flash (`newest_flash_model`). The number check accepts hedged approximations ("about
+  70%") within 3%. 90 s timeout. Charts use width='stretch'. Answers take about 25–60 s. The live app still needs a
+  manual reboot after each push (Claude can do it: Manage app → ⋮ → Reboot app → Reboot).
+  **Next: step 11 (five agent tests run live in Gemini mode, validation table with the user's Power BI numbers,
+  reflection 300–500 words, contribution statement, README).**
   Still owed: Power BI numbers from the user for the validation table; assistant before/after question for agent Test 5.
 
 ## Build plan (Project Guide order)
