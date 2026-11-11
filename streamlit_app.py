@@ -3,6 +3,7 @@ Calculations live in analytics.py and the assistant in agent.py."""
 from pathlib import Path
 
 import pandas as pd
+import plotly.express as px
 import streamlit as st
 
 import agent
@@ -114,7 +115,68 @@ with tab_data:
 
 # ------------------------------------------------------------------ dashboard
 with tab_dash:
-    st.info('Filters and charts are coming next.')
+    options = analytics.filter_options(fact)
+    st.markdown('**Filters** (leave a box empty to include all)')
+    cols = st.columns(len(options))
+    selections = {name: col.multiselect(name, choices, key=f'filter_{name}')
+                  for col, (name, choices) in zip(cols, options.items())}
+    view = analytics.apply_filters(fact, selections)
+    scope = analytics.describe_scope(selections)
+    st.caption(f'Scope: {scope}')
+
+    if view.empty:
+        st.info('No sales match this combination of filters. Clear one or more filters.')
+    else:
+        total = analytics.total_revenue(view)
+        by_channel = analytics.revenue_by(view, 'Channel')
+        kpis = st.columns(2 + len(by_channel))
+        kpis[0].metric('Total revenue', f'${total:,.0f}')
+        kpis[1].metric('Sales rows used', f'{len(view):,}')
+        for kpi, row in zip(kpis[2:], by_channel.itertuples()):
+            share = row.Revenue / total * 100 if total else 0
+            kpi.metric(f'{row.Channel} revenue', f'${row.Revenue:,.0f}',
+                       f'{share:.1f}% of filtered total', delta_color='off')
+
+        money = {'Revenue': ':$,.0f'}
+        left, right = st.columns(2)
+
+        yearly = analytics.revenue_by(view, 'Year', 'Channel')
+        yearly['Year'] = yearly['Year'].astype(str)
+        fig = px.bar(yearly, x='Year', y='Revenue', color='Channel', barmode='group',
+                     title='Annual revenue by sales channel', hover_data=money)
+        fig.update_layout(yaxis_title='Revenue ($)', xaxis_title='Year')
+        left.plotly_chart(fig, use_container_width=True)
+
+        monthly = analytics.revenue_by(view, 'MonthStart', 'Channel')
+        fig = px.line(monthly, x='MonthStart', y='Revenue', color='Channel', markers=True,
+                      title='Monthly revenue by sales channel', hover_data=money)
+        fig.update_layout(yaxis_title='Revenue ($)', xaxis_title='Month')
+        right.plotly_chart(fig, use_container_width=True)
+
+        left, right = st.columns(2)
+        stores = analytics.revenue_by(view, 'Store Label', 'Channel').sort_values('Revenue')
+        fig = px.bar(stores, x='Revenue', y='Store Label', color='Channel', orientation='h',
+                     title='Revenue by store', hover_data=money,
+                     height=max(350, 28 * len(stores)))
+        fig.update_layout(xaxis_title='Revenue ($)', yaxis_title='Store (ID + city)')
+        left.plotly_chart(fig, use_container_width=True)
+
+        cats = analytics.revenue_by(view, 'Category').sort_values('Revenue', ascending=False)
+        fig = px.bar(cats, x='Category', y='Revenue', title='Revenue by product category',
+                     hover_data=money)
+        fig.update_layout(yaxis_title='Revenue ($)', xaxis_title='Category')
+        right.plotly_chart(fig, use_container_width=True)
+
+        with st.expander('Numbers behind the charts'):
+            a, b = st.columns(2)
+            a.markdown('Revenue by year')
+            a.dataframe(analytics.revenue_by(view, 'Year').style.format({'Revenue': '${:,.2f}'}),
+                        hide_index=True)
+            b.markdown('Revenue by category')
+            b.dataframe(cats.style.format({'Revenue': '${:,.2f}'}), hide_index=True)
+            st.markdown('Revenue by month')
+            st.dataframe(analytics.revenue_by(view, 'MonthStart').style.format(
+                {'Revenue': '${:,.2f}', 'MonthStart': '{:%Y-%m}'}), hide_index=True)
 
 # ------------------------------------------------------------------ assistant
 with tab_assistant:

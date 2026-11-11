@@ -6,7 +6,9 @@
 _One paragraph for a manager, not a programmer._
 
 ## Live app
-_URL here. Note that the app may take a moment to wake up._
+https://epreapp-bi-analyst-64pcdijgktkyhappv2pxhtr.streamlit.app/
+
+The app may take a minute to wake up if nobody has opened it recently.
 
 ## How to use it
 _Upload files, use filters, ask the assistant. Include the file names and sheets it expects._

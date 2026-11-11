@@ -238,12 +238,54 @@ def build_model(tables: dict[str, pd.DataFrame]) -> dict:
 
     # Label products by ID + name: some names (e.g. "Base Model") repeat across IDs.
     fact['Product Label'] = fact['Product ID'].astype(str) + ' ' + fact['Product'].fillna('(unknown)')
+    # Label stores by ID + city: two stores share a city (Orlando), and the website
+    # has no city, so it falls back to its channel name.
+    place = fact['City'].fillna(fact['Channel']).fillna('(unknown store)')
+    fact['Store Label'] = fact['Store ID'].astype(str) + ' ' + place
+    # A blank channel or category gets an explicit label so it can still be filtered.
+    fact['Channel'] = fact['Channel'].fillna('(missing)')
+    fact['Category'] = fact['Category'].fillna('(missing)')
     return {'fact': fact, 'survey': survey, 'merge_checks': checks, 'issues': issues}
 
 
 def total_revenue(fact: pd.DataFrame) -> float:
     """Sum of the stored Revenue column over the rows given (blanks are skipped)."""
     return float(fact['Revenue'].sum())
+
+
+# ----------------------------------------------------------- dashboard
+FILTER_COLUMNS = {'Year': 'Year', 'Store': 'Store Label', 'Category': 'Category',
+                  'Channel': 'Channel'}
+
+
+def filter_options(fact: pd.DataFrame) -> dict[str, list]:
+    """The choices for each dashboard filter, read from the loaded data (never typed
+    in), so a new year, store or category shows up automatically."""
+    return {name: sorted(fact[col].dropna().unique().tolist())
+            for name, col in FILTER_COLUMNS.items()}
+
+
+def apply_filters(fact: pd.DataFrame, selections: dict[str, list]) -> pd.DataFrame:
+    """Keep only rows matching every filter. An empty selection means 'all'."""
+    out = fact
+    for name, chosen in selections.items():
+        if chosen:
+            out = out[out[FILTER_COLUMNS[name]].isin(chosen)]
+    return out
+
+
+def describe_scope(selections: dict[str, list]) -> str:
+    """Plain-English scope line, e.g. 'Year: 2027 · Store: all · ...'."""
+    parts = []
+    for name in FILTER_COLUMNS:
+        chosen = selections.get(name) or []
+        parts.append(f'{name}: ' + (', '.join(map(str, chosen)) if chosen else 'all'))
+    return ' · '.join(parts)
+
+
+def revenue_by(fact: pd.DataFrame, *cols: str) -> pd.DataFrame:
+    """Revenue summed by one or more columns, as a tidy table for charts."""
+    return fact.groupby(list(cols), dropna=False)['Revenue'].sum().reset_index()
 
 
 # ---------------------------------------------------------- tool contract

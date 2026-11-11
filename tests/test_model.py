@@ -113,3 +113,25 @@ def test_adding_1000_to_one_row_adds_exactly_1000(tables):
 def test_blank_report_names_rows(tables):
     rep = analytics.blank_report(tables['stores'], 'ID')
     assert {'column': 'City', 'blank_count': 1, 'rows (by key)': 'W'} in rep
+
+
+# --------------------------------------------------------------- dashboard
+def test_filter_options_come_from_data(tables):
+    opts = analytics.filter_options(analytics.build_model(tables)['fact'])
+    assert opts['Year'] == [2025, 2026]
+    assert opts['Channel'] == ['Brick & Mortar', 'Website']
+    assert opts['Store'] == ['B Town', 'W Website']     # website has no city -> channel name
+
+
+def test_filters_combine_and_empty_means_all(tables):
+    fact = analytics.build_model(tables)['fact']
+    assert analytics.total_revenue(analytics.apply_filters(fact, {'Year': []})) == 350
+    only = analytics.apply_filters(fact, {'Year': [2025], 'Channel': ['Brick & Mortar']})
+    assert analytics.total_revenue(only) == 200                   # just S2
+    assert analytics.describe_scope({'Year': [2025]}).startswith('Year: 2025 · Store: all')
+
+
+def test_revenue_by_month(tables):
+    fact = analytics.build_model(tables)['fact']
+    monthly = analytics.revenue_by(fact, 'MonthStart')
+    assert monthly['Revenue'].tolist() == [100, 200, 50]          # Jan-25, Feb-25, Jan-26

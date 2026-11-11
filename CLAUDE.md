@@ -54,7 +54,11 @@ Survey Analysis page (scatter of Satisfaction vs Revenue by Survey ID, store tab
 - 2026-11-10: Data profiled; grain statements in README. Step 2–3 done: `analytics.read_epresso_table` /
   `build_model` / `total_revenue`, merge checks shown in app, data-quality section, per-table upload with
   defaults from `data/`, cache keyed on bytes (verified +$1,000 recalculates). Tests in `tests/test_model.py`.
-  **Next: step 4, filters + ≥3 charts on the Dashboard tab.** Deployment status on Streamlit Cloud: unconfirmed.
+- 2026-11-10: Deployed at https://epreapp-bi-analyst-64pcdijgktkyhappv2pxhtr.streamlit.app/ (needed one manual
+  reboot to pick up a push). Step 4 done: Dashboard tab with Year/Store/Category/Channel multiselects (options from
+  data), scope line, KPIs per channel, 4 charts (annual by channel, monthly by channel, by store, by category) and
+  a numbers expander. Check: 2028 Website = $6,339,640 (240 rows) matches raw-file sum.
+  **Next: step 5, verify upload path in the browser; then step 7 $1,000 test (needs a modified Sales copy).**
 
 ## Build plan (Project Guide order)
 1. Checkpoint 0: repo from `jmmcallister/epresso-starter` template, deployed on Streamlit Community Cloud.
