@@ -246,7 +246,8 @@ def rules_router(question: str, model: dict) -> dict:
 
 
 # ------------------------------------------------- language-model router
-DEFAULT_LLM_MODEL = 'gemini-2.5-flash'
+# gemini-2.5-flash was closed to new users (404) on 2026-11-10; Google's error named this one.
+DEFAULT_LLM_MODEL = 'gemini-3.8-flash'
 MAX_TOOL_ROUNDS = 4  # the model may ask for tools at most this many times per question
 
 ANSWER_FORMAT = """Answer in exactly this format, with nothing before it:
@@ -359,8 +360,44 @@ def _sections(text: str) -> dict[str, list[str]]:
     return parts
 
 
+def newest_flash_model(client) -> str | None:
+    """Ask the API which models this key can use and pick the newest general 'flash'
+    model (not lite/image/audio variants). Used only when the configured model is gone."""
+    def version(name):
+        m = re.search(r'gemini-(\d+(?:\.\d+)?)', name)
+        return float(m.group(1)) if m else 0.0
+    names = []
+    for m in client.models.list():
+        name = getattr(m, 'name', '').split('/')[-1]
+        actions = getattr(m, 'supported_actions', None) or ['generateContent']
+        if ('flash' in name and 'generateContent' in actions and not any(
+                bad in name for bad in ('lite', 'image', 'live', 'tts', 'audio', 'exp', 'preview'))):
+            names.append(name)
+    return max(names, key=version) if names else None
+
+
 def llm_answer(question: str, model: dict, client, model_name: str = DEFAULT_LLM_MODEL,
-               dashboard_scope: str = '') -> tuple[dict, list]:
+               dashboard_scope: str = '') -> tuple[dict, list, str]:
+    """Like _llm_answer_once, but if the model name no longer exists (404), switch once to
+    the newest available flash model. Returns (sections, tool_log, model_name_used)."""
+    try:
+        parts, log = _llm_answer_once(question, model, client, model_name, dashboard_scope)
+        return parts, log, model_name
+    except LLMUnavailable as exc:
+        if 'NOT_FOUND' not in str(exc) and '404' not in str(exc):
+            raise
+        try:
+            replacement = newest_flash_model(client)
+        except Exception:
+            replacement = None
+        if not replacement or replacement == model_name:
+            raise
+        parts, log = _llm_answer_once(question, model, client, replacement, dashboard_scope)
+        return parts, log, replacement
+
+
+def _llm_answer_once(question: str, model: dict, client, model_name: str,
+                     dashboard_scope: str = '') -> tuple[dict, list]:
     """Option A: the language model chooses tools by function calling. OUR dispatcher
     runs each requested tool and logs it; the model only sees the results and writes
     the explanation. Raises LLMUnavailable on any API problem so the caller can fall back."""
@@ -549,7 +586,9 @@ def answer_question(question: str, model: dict, mode: str = 'rules', data_note: 
 def _llm_answer_dict(question, model, client, model_name, data_note, dashboard_scope) -> dict:
     """Run the model, then CHECK it: any number in its text that is not in a tool result
     means its Findings are replaced by ones written directly from the tool results."""
-    parts, log = llm_answer(question, model, client, model_name, dashboard_scope)
+    parts, log, used = llm_answer(question, model, client, model_name, dashboard_scope)
+    if used != model_name:
+        model_name = f'{used}; configured model {model_name} was not available'
     results = [ToolResult(**c['result']) for c in log]
     scopes = [_scope_text(r) for r in results]
     scope = ('; '.join(scopes) if scopes else 'no calculation was run')

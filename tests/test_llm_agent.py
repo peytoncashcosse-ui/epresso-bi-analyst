@@ -110,3 +110,22 @@ def test_tool_parameters_are_limited_to_loaded_values(model):
 def test_number_check_on_text(text, bad):
     log = [{'arguments': {}, 'result': {'value': 6339640.0}}]
     assert agent.unsupported_numbers(text, log, '') == bad
+
+
+def test_retired_model_switches_to_newest_flash(model):
+    class Retiring(FakeClient):
+        def generate_content(self, model, contents, config):
+            if model == 'old-model':
+                raise RuntimeError('404 NOT_FOUND: model is no longer available')
+            return super().generate_content(model, contents, config)
+
+        def list(self):
+            names = ['gemini-3.8-flash', 'gemini-3.9-flash-lite', 'gemini-3.1-flash', 'gemini-3.9-pro']
+            return [SimpleNamespace(name=f'models/{n}', supported_actions=['generateContent'])
+                    for n in names]
+
+    client = Retiring(call('get_total_revenue', year='2026', channel='Website'), say(GOOD))
+    out = agent.answer_question('Website 2026?', model, mode='llm', client=client,
+                                model_name='old-model')
+    assert 'gemini-3.8-flash; configured model old-model was not available' in out['mode']
+    assert client.requests[-1]['model'] == 'gemini-3.8-flash'
