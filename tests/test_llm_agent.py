@@ -127,7 +127,7 @@ def test_retired_model_switches_to_newest_flash(model):
     client = Retiring(call('get_total_revenue', year='2026', channel='Website'), say(GOOD))
     out = agent.answer_question('Website 2026?', model, mode='llm', client=client,
                                 model_name='old-model')
-    assert 'gemini-3.8-flash; configured model old-model was not available' in out['mode']
+    assert 'gemini-3.8-flash; configured model old-model was unavailable' in out['mode']
     assert client.requests[-1]['model'] == 'gemini-3.8-flash'
 
 def test_whole_number_rounding_is_accepted():
@@ -136,3 +136,50 @@ def test_whole_number_rounding_is_accepted():
     assert agent.unsupported_numbers('Website had about 70% of revenue', log, '') == []
     assert agent.unsupported_numbers('Website had about 75% of revenue', log, '') == ['75']
     assert agent.unsupported_numbers('Website had 70% of revenue', log, '') == ['70']   # not marked approximate
+
+# ------------------------------------------------- temporary server errors
+class Flaky(FakeClient):
+    """Raises the given errors first (per model), then plays back replies."""
+    def __init__(self, *replies, fail=None):
+        super().__init__(*replies)
+        self.fail = fail or {}
+
+    def generate_content(self, model, contents, config):
+        if self.fail.get(model):
+            self.requests.append({'model': model})
+            raise self.fail[model].pop(0)
+        return super().generate_content(model, contents, config)
+
+    def list(self):
+        return [SimpleNamespace(name=f'models/{n}', supported_actions=['generateContent'])
+                for n in ('gemini-3.8-flash', 'gemini-3.7-flash')]
+
+
+OVERLOADED = '503 UNAVAILABLE: This model is currently experiencing high demand.'
+
+
+def test_overload_is_retried_then_answers(model, monkeypatch):
+    monkeypatch.setattr(agent, 'RETRY_DELAYS', (0, 0))
+    client = Flaky(call('get_total_revenue', year='2026', channel='Website'), say(GOOD),
+                   fail={'gemini-3.8-flash': [RuntimeError(OVERLOADED)]})
+    out = agent.answer_question('Website 2026?', model, mode='llm', client=client,
+                                model_name='gemini-3.8-flash')
+    assert 'Option A, gemini-3.8-flash' in out['mode'] and 'Number check passed' in out['mode']
+
+
+def test_persistent_overload_switches_to_another_flash_model(model, monkeypatch):
+    monkeypatch.setattr(agent, 'RETRY_DELAYS', (0, 0))
+    client = Flaky(call('get_total_revenue', year='2026', channel='Website'), say(GOOD),
+                   fail={'gemini-3.8-flash': [RuntimeError(OVERLOADED)] * 3})
+    out = agent.answer_question('Website 2026?', model, mode='llm', client=client,
+                                model_name='gemini-3.8-flash')
+    assert 'gemini-3.7-flash; configured model gemini-3.8-flash was unavailable' in out['mode']
+    assert [r['model'] for r in client.requests[:3]] == ['gemini-3.8-flash'] * 3   # 1 try + 2 retries
+
+
+def test_quota_error_is_not_retried(model, monkeypatch):
+    monkeypatch.setattr(agent, 'RETRY_DELAYS', (0, 0))
+    client = Flaky(fail={'gemini-3.8-flash': [RuntimeError('429 RESOURCE_EXHAUSTED quota')]})
+    out = agent.answer_question('How much revenue in 2025?', model, mode='llm', client=client,
+                                model_name='gemini-3.8-flash')
+    assert out['mode'].startswith('Rules-based') and len(client.requests) == 1

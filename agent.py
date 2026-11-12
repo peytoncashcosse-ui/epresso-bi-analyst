@@ -5,6 +5,7 @@ and no tool changes the loaded data."""
 from __future__ import annotations
 
 import re
+import time
 
 import analytics
 from analytics import ToolResult
@@ -372,9 +373,33 @@ def _sections(text: str) -> dict[str, list[str]]:
     return parts
 
 
-def newest_flash_model(client) -> str | None:
+RETRY_DELAYS = (3, 6)  # seconds to wait before each retry of a temporary server error
+_TRANSIENT = ('503', 'UNAVAILABLE', '500', 'INTERNAL', 'DEADLINE_EXCEEDED', 'overloaded',
+              'high demand')
+
+
+def _is_transient(exc) -> bool:
+    """A temporary server problem (overload, outage) that is worth retrying. Quota errors
+    (429) are not: retrying them a few seconds later does not help."""
+    return any(t.lower() in str(exc).lower() for t in _TRANSIENT)
+
+
+def _generate(client, model_name, contents, config):
+    """One model call, retried after a short wait if Google reports a temporary error."""
+    for delay in (*RETRY_DELAYS, None):
+        try:
+            return client.models.generate_content(model=model_name, contents=contents,
+                                                  config=config)
+        except Exception as exc:
+            if delay is None or not _is_transient(exc):
+                raise
+            time.sleep(delay)
+
+
+def newest_flash_model(client, exclude: str | None = None) -> str | None:
     """Ask the API which models this key can use and pick the newest general 'flash'
-    model (not lite/image/audio variants). Used only when the configured model is gone."""
+    model (not lite/image/audio variants), other than `exclude`. Used only when the
+    configured model is gone or stays overloaded."""
     def version(name):
         m = re.search(r'gemini-(\d+(?:\.\d+)?)', name)
         return float(m.group(1)) if m else 0.0
@@ -382,7 +407,7 @@ def newest_flash_model(client) -> str | None:
     for m in client.models.list():
         name = getattr(m, 'name', '').split('/')[-1]
         actions = getattr(m, 'supported_actions', None) or ['generateContent']
-        if ('flash' in name and 'generateContent' in actions and not any(
+        if ('flash' in name and name != exclude and 'generateContent' in actions and not any(
                 bad in name for bad in ('lite', 'image', 'live', 'tts', 'audio', 'exp', 'preview'))):
             names.append(name)
     return max(names, key=version) if names else None
@@ -390,19 +415,21 @@ def newest_flash_model(client) -> str | None:
 
 def llm_answer(question: str, model: dict, client, model_name: str = DEFAULT_LLM_MODEL,
                dashboard_scope: str = '') -> tuple[dict, list, str]:
-    """Like _llm_answer_once, but if the model name no longer exists (404), switch once to
-    the newest available flash model. Returns (sections, tool_log, model_name_used)."""
+    """Like _llm_answer_once, but if the model no longer exists (404) or is still
+    overloaded after retries (503), switch once to the newest OTHER flash model.
+    Returns (sections, tool_log, model_name_used)."""
     try:
         parts, log = _llm_answer_once(question, model, client, model_name, dashboard_scope)
         return parts, log, model_name
     except LLMUnavailable as exc:
-        if 'NOT_FOUND' not in str(exc) and '404' not in str(exc):
+        gone = 'NOT_FOUND' in str(exc) or '404' in str(exc)
+        if not (gone or _is_transient(exc)):
             raise
         try:
-            replacement = newest_flash_model(client)
+            replacement = newest_flash_model(client, exclude=model_name)
         except Exception:
             replacement = None
-        if not replacement or replacement == model_name:
+        if not replacement:
             raise
         parts, log = _llm_answer_once(question, model, client, replacement, dashboard_scope)
         return parts, log, replacement
@@ -426,8 +453,7 @@ def _llm_answer_once(question: str, model: dict, client, model_name: str,
     contents = [types.Content(role='user', parts=[types.Part(text=question)])]
     try:
         for _ in range(MAX_TOOL_ROUNDS + 1):
-            response = client.models.generate_content(model=model_name, contents=contents,
-                                                       config=config)
+            response = _generate(client, model_name, contents, config)
             calls = response.function_calls or []
             if not calls:
                 return _sections(response.text or ''), log
@@ -600,7 +626,7 @@ def _llm_answer_dict(question, model, client, model_name, data_note, dashboard_s
     means its Findings are replaced by ones written directly from the tool results."""
     parts, log, used = llm_answer(question, model, client, model_name, dashboard_scope)
     if used != model_name:
-        model_name = f'{used}; configured model {model_name} was not available'
+        model_name = f'{used}; configured model {model_name} was unavailable'
     results = [ToolResult(**c['result']) for c in log]
     scopes = [_scope_text(r) for r in results]
     scope = ('; '.join(scopes) if scopes else 'no calculation was run')

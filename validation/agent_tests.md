@@ -27,6 +27,16 @@ Mode under test: **rules-based assistant (Option B)**. The language-model router
 | Retest (live, after redeploy) | Same question. Gemini called `get_total_revenue` and `get_revenue_by_channel`. Its own findings were shown: website revenue in 2028 = 6339640, a 70.68% share of 8969470, with Brick & Mortar 2629830 (29.32%). Answered by: "Language-model agent (Option A, gemini-3.8-flash, function calling). Number check passed: every number matches a tool result." It also stated that revenue is not profit. **Pass.** |
 | Follow-up | Gemini printed money unformatted and repeated the scope inside Findings, so the answer-format prompt now asks for `$1,234,567.89` formatting and no scope in Findings. |
 
+## Fix and retest: Gemini overloaded (503), 2026-11-12
+
+| Item | Entry |
+|---|---|
+| Question | "How much revenue did the website generate in 2028?" (Gemini mode, live app) |
+| What happened | Gemini returned `503 UNAVAILABLE: This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later.` The app fell back to the rules-based assistant, which answered correctly ($6,339,640.00 from 240 rows) and printed the reason under the answer. **This is the required graceful failure working on the real API.** |
+| Problem | One temporary overload sent every question to the rules, even though Google says these spikes are brief. |
+| Fix | Temporary server errors (503/500/UNAVAILABLE/"high demand") are retried twice, after 3 s and then 6 s. If the model is still overloaded, the agent switches once to the newest *other* flash model before falling back to the rules. Quota errors (429) are not retried, because waiting a few seconds does not help them. Tests: `test_overload_is_retried_then_answers`, `test_persistent_overload_switches_to_another_flash_model`, `test_quota_error_is_not_retried`. |
+| Retest | Recorded with the required tests below. |
+
 ## Required tests (to be completed)
 
 | Test | Question asked | Function(s) used | Expected result / behavior | Actual result | Pass / Fail | Revision made |
