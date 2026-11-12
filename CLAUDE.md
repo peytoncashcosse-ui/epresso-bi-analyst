@@ -93,6 +93,9 @@ Survey Analysis page (scatter of Satisfaction vs Revenue by Survey ID, store tab
   screenshots in validation/screenshots/. Tip: the app's DOM is reachable at <app-url>/~/+/ (no iframe), which is needed
   for file_upload. **Remaining:** README, reflection, contribution statement; later, rerun the tests in Gemini mode
   for Option A (the user can create a local .streamlit/secrets.toml so models can be timed locally).
+- 2026-11-12: Final README written. Reflection + contribution statement DRAFTED in validation/reflection.md (about 486
+  words incl. ✏️ placeholders the student must personalize; their name is deliberately left out). **Remaining:** the student
+  edits the reflection; Option A retest in Gemini mode; final pre-submission check (wake app, open URL, Canvas links).
   Still owed: Power BI numbers from the user for the validation table; assistant before/after question for agent Test 5.
 
 ## Build plan (Project Guide order)
