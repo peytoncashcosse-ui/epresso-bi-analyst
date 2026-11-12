@@ -191,3 +191,16 @@ def test_slow_model_falls_back_within_time_budget(model, monkeypatch):
     assert out['mode'].startswith('Rules-based') and 'no answer within' in out['mode']
     assert client.requests == []                         # gave up before calling the API
     assert '$400.00' in out['findings'][0]
+
+def test_thinking_is_low_and_dropped_if_rejected(model):
+    class NoThinking(FakeClient):
+        def generate_content(self, model, contents, config):
+            if config.thinking_config is not None:
+                self.requests.append({'thinking': config.thinking_config.thinking_level})
+                raise RuntimeError('400 INVALID_ARGUMENT: thinking_level is not supported')
+            return super().generate_content(model, contents, config)
+
+    client = NoThinking(call('get_total_revenue', year='2026', channel='Website'), say(GOOD))
+    out = agent.answer_question('Website 2026?', model, mode='llm', client=client)
+    assert str(client.requests[0]['thinking']).endswith('LOW')    # first try asked for LOW
+    assert 'Option A' in out['mode'] and 'Number check passed' in out['mode']

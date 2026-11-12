@@ -453,6 +453,24 @@ def llm_answer(question: str, model: dict, client, model_name: str = DEFAULT_LLM
 
 def _llm_answer_once(question: str, model: dict, client, model_name: str,
                      dashboard_scope: str = '', deadline: float | None = None) -> tuple[dict, list]:
+    """Ask with low 'thinking' (fast: the model only picks tools and explains numbers).
+    If this model rejects the thinking setting, ask once more without it."""
+    try:
+        return _llm_answer_attempt(question, model, client, model_name, dashboard_scope,
+                                   deadline, thinking=THINKING_LEVEL)
+    except LLMUnavailable as exc:
+        if THINKING_LEVEL and 'thinking' in str(exc).lower():
+            return _llm_answer_attempt(question, model, client, model_name, dashboard_scope,
+                                       deadline, thinking=None)
+        raise
+
+
+THINKING_LEVEL = 'LOW'  # how much the model reasons before answering; LOW is much faster
+
+
+def _llm_answer_attempt(question: str, model: dict, client, model_name: str,
+                        dashboard_scope: str = '', deadline: float | None = None,
+                        thinking: str | None = THINKING_LEVEL) -> tuple[dict, list]:
     """Option A: the language model chooses tools by function calling. OUR dispatcher
     runs each requested tool and logs it; the model only sees the results and writes
     the explanation. Raises LLMUnavailable on any API problem so the caller can fall back."""
@@ -465,6 +483,7 @@ def _llm_answer_once(question: str, model: dict, client, model_name: str,
         system_instruction=SYSTEM_PROMPT + '\n' + ANSWER_FORMAT + note,
         tools=[types.Tool(function_declarations=tool_declarations(model))],
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
+        thinking_config=types.ThinkingConfig(thinking_level=thinking) if thinking else None,
         temperature=0)
     contents = [types.Content(role='user', parts=[types.Part(text=question)])]
     deadline = deadline or time.monotonic() + TIME_BUDGET
