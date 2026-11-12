@@ -211,8 +211,9 @@ def gemini_client():
     try:
         from google import genai
         from google.genai import types
-        # A request that takes longer than 90 s raises an error, so the rules answer instead.
-        client = genai.Client(api_key=key, http_options=types.HttpOptions(timeout=90_000))
+        # A request that takes too long raises an error, so the rules answer instead.
+        client = genai.Client(api_key=key,
+                              http_options=types.HttpOptions(timeout=agent.REQUEST_TIMEOUT_MS))
         return client, model_name, ''
     except Exception as exc:
         return None, model_name, f'could not start the Gemini client ({type(exc).__name__})'

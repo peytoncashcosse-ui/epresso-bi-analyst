@@ -183,3 +183,11 @@ def test_quota_error_is_not_retried(model, monkeypatch):
     out = agent.answer_question('How much revenue in 2025?', model, mode='llm', client=client,
                                 model_name='gemini-3.8-flash')
     assert out['mode'].startswith('Rules-based') and len(client.requests) == 1
+
+def test_slow_model_falls_back_within_time_budget(model, monkeypatch):
+    monkeypatch.setattr(agent, 'TIME_BUDGET', -1)      # deadline already passed
+    client = FakeClient(call('get_total_revenue'), say(GOOD))
+    out = agent.answer_question('How much revenue in 2025?', model, mode='llm', client=client)
+    assert out['mode'].startswith('Rules-based') and 'no answer within' in out['mode']
+    assert client.requests == []                         # gave up before calling the API
+    assert '$400.00' in out['findings'][0]

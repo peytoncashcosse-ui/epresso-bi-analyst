@@ -374,6 +374,8 @@ def _sections(text: str) -> dict[str, list[str]]:
 
 
 RETRY_DELAYS = (3, 6)  # seconds to wait before each retry of a temporary server error
+TIME_BUDGET = 60        # seconds for the whole language-model answer; then the rules answer
+REQUEST_TIMEOUT_MS = 25_000  # one API request; used when the app creates the client
 _TRANSIENT = ('503', 'UNAVAILABLE', '500', 'INTERNAL', 'DEADLINE_EXCEEDED', 'overloaded',
               'high demand')
 
@@ -384,14 +386,25 @@ def _is_transient(exc) -> bool:
     return any(t.lower() in str(exc).lower() for t in _TRANSIENT)
 
 
-def _generate(client, model_name, contents, config):
-    """One model call, retried after a short wait if Google reports a temporary error."""
+class OutOfTime(RuntimeError):
+    """The language model did not finish within TIME_BUDGET seconds."""
+
+
+def _check_time(deadline: float):
+    if time.monotonic() > deadline:
+        raise OutOfTime(f'no answer within {TIME_BUDGET} s')
+
+
+def _generate(client, model_name, contents, config, deadline: float):
+    """One model call, retried after a short wait if Google reports a temporary error,
+    but never past the overall deadline."""
     for delay in (*RETRY_DELAYS, None):
+        _check_time(deadline)
         try:
             return client.models.generate_content(model=model_name, contents=contents,
                                                   config=config)
         except Exception as exc:
-            if delay is None or not _is_transient(exc):
+            if delay is None or not _is_transient(exc) or time.monotonic() + delay > deadline:
                 raise
             time.sleep(delay)
 
@@ -418,12 +431,14 @@ def llm_answer(question: str, model: dict, client, model_name: str = DEFAULT_LLM
     """Like _llm_answer_once, but if the model no longer exists (404) or is still
     overloaded after retries (503), switch once to the newest OTHER flash model.
     Returns (sections, tool_log, model_name_used)."""
+    deadline = time.monotonic() + TIME_BUDGET
     try:
-        parts, log = _llm_answer_once(question, model, client, model_name, dashboard_scope)
+        parts, log = _llm_answer_once(question, model, client, model_name, dashboard_scope,
+                                      deadline)
         return parts, log, model_name
     except LLMUnavailable as exc:
         gone = 'NOT_FOUND' in str(exc) or '404' in str(exc)
-        if not (gone or _is_transient(exc)):
+        if not (gone or _is_transient(exc)) or time.monotonic() > deadline:
             raise
         try:
             replacement = newest_flash_model(client, exclude=model_name)
@@ -431,12 +446,13 @@ def llm_answer(question: str, model: dict, client, model_name: str = DEFAULT_LLM
             replacement = None
         if not replacement:
             raise
-        parts, log = _llm_answer_once(question, model, client, replacement, dashboard_scope)
+        parts, log = _llm_answer_once(question, model, client, replacement, dashboard_scope,
+                                      deadline)
         return parts, log, replacement
 
 
 def _llm_answer_once(question: str, model: dict, client, model_name: str,
-                     dashboard_scope: str = '') -> tuple[dict, list]:
+                     dashboard_scope: str = '', deadline: float | None = None) -> tuple[dict, list]:
     """Option A: the language model chooses tools by function calling. OUR dispatcher
     runs each requested tool and logs it; the model only sees the results and writes
     the explanation. Raises LLMUnavailable on any API problem so the caller can fall back."""
@@ -451,9 +467,10 @@ def _llm_answer_once(question: str, model: dict, client, model_name: str,
         automatic_function_calling=types.AutomaticFunctionCallingConfig(disable=True),
         temperature=0)
     contents = [types.Content(role='user', parts=[types.Part(text=question)])]
+    deadline = deadline or time.monotonic() + TIME_BUDGET
     try:
         for _ in range(MAX_TOOL_ROUNDS + 1):
-            response = _generate(client, model_name, contents, config)
+            response = _generate(client, model_name, contents, config, deadline)
             calls = response.function_calls or []
             if not calls:
                 return _sections(response.text or ''), log

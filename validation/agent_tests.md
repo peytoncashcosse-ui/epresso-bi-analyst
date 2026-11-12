@@ -36,6 +36,8 @@ Mode under test: **rules-based assistant (Option B)**. The language-model router
 | Problem | One temporary overload sent every question to the rules, even though Google says these spikes are brief. |
 | Fix | Temporary server errors (503/500/UNAVAILABLE/"high demand") are retried twice, after 3 s and then 6 s. If the model is still overloaded, the agent switches once to the newest *other* flash model before falling back to the rules. Quota errors (429) are not retried, because waiting a few seconds does not help them. Tests: `test_overload_is_retried_then_answers`, `test_persistent_overload_switches_to_another_flash_model`, `test_quota_error_is_not_retried`. |
 | Retest | Recorded with the required tests below. |
+| Follow-up problem | After the retry fix, the same question left the app on "Calculating..." for more than 3 minutes. Each request could wait up to 90 s before timing out, and with retries plus a model switch the waits added up. This is also why the student reported that "the agent isn't working". |
+| Follow-up fix | Each request now times out after 25 s, and the whole answer has a 60 s budget (`TIME_BUDGET`). Retries and the model switch only happen while time remains; after that, the rules-based assistant answers and says "no answer within 60 s". Test: `test_slow_model_falls_back_within_time_budget`. |
 
 ## Required tests (to be completed)
 
