@@ -87,6 +87,12 @@ Survey Analysis page (scatter of Satisfaction vs Revenue by Survey ID, store tab
   upload validation/Sales_plus1000.txt, ask the same question before/after, then restore); the user hasn't chosen
   whether Claude runs them in the browser or the user does; (2) final README; (3) reflection 300–500 words;
   (4) solo contribution statement. The formatting prompt tweak (b6b3398) is pushed but needs an app reboot.
+- 2026-11-12: Gemini overloaded all day (503, then 504 DEADLINE_EXCEEDED even with thinking_level LOW). Added retries
+  (3 s, 6 s) + switch to another flash model, 25 s request timeout, 60 s total budget (TIME_BUDGET), thinking LOW.
+  70 tests. The five agent tests were run live in RULES mode (switch on), all pass, and are documented in agent_tests.md with
+  screenshots in validation/screenshots/. Tip: the app's DOM is reachable at <app-url>/~/+/ (no iframe), which is needed
+  for file_upload. **Remaining:** README, reflection, contribution statement; later, rerun the tests in Gemini mode
+  for Option A (the user can create a local .streamlit/secrets.toml so models can be timed locally).
   Still owed: Power BI numbers from the user for the validation table; assistant before/after question for agent Test 5.
 
 ## Build plan (Project Guide order)

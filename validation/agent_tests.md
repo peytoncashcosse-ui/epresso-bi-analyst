@@ -39,13 +39,19 @@ Mode under test: **rules-based assistant (Option B)**. The language-model router
 | Follow-up problem | After the retry fix, the same question left the app on "Calculating..." for more than 3 minutes. Each request could wait up to 90 s before timing out, and with retries plus a model switch the waits added up. This is also why the student reported that "the agent isn't working". |
 | Follow-up fix | Each request now times out after 25 s, and the whole answer has a 60 s budget (`TIME_BUDGET`). Retries and the model switch only happen while time remains; after that, the rules-based assistant answers and says "no answer within 60 s". Test: `test_slow_model_falls_back_within_time_budget`. |
 
-## Required tests (to be completed)
+## Required tests
+
+**Run on the live app on 2026-11-12 with the rules-based assistant (Option B).** The "Use the rules-based assistant only"
+switch was turned on because Gemini was overloaded that day (503 UNAVAILABLE and 504 DEADLINE_EXCEEDED on every attempt;
+see the entries above). Each time, the language-model path fell back to these same rules answers, so the results below
+are what a user saw either way. The tests will be repeated in Gemini mode (Option A) once the API responds normally.
+Screenshots are in `validation/screenshots/`.
 
 | Test | Question asked | Function(s) used | Expected result / behavior | Actual result | Pass / Fail | Revision made |
 |---|---|---|---|---|---|---|
-| 1. Numerical calculation | | | | | | |
-| 2. Numerical comparison | | | | | | |
-| 3. Missing information | | | | | | |
-| 4. Analytical judgment | | | | | | |
-| 5. Updated data | | | | | | |
-| Extra: fix and retest | "What is the weather in Denver?" | none (after fix) | Unsupported reply | See above | Pass after fix | Router fallback and keyword matching |
+| 1. Numerical calculation | "How much revenue did the website generate in 2028?" | `get_total_revenue(year=2028, channel="Website")` | $6,339,640.00 from 240 rows, matching the independent PowerShell sum of the raw file | "Revenue: **$6,339,640.00** from 240 sales rows." Scope: year 2028, channel Website. States that revenue is not profit. (`test1_answer.jpg`, `test1_tool_log.jpg`) | Pass | None needed |
+| 2. Numerical comparison | "Which store experienced the greatest percentage revenue decline between 2025 and 2029?" | `get_growth(by="store", start_year=2025, end_year=2029)` | SH11 Chicago, −66.81% ($539,740 → $179,130), and acknowledge that nearly every store declined (if none had declined, it should say so; that case is covered by `test_growth_says_when_nothing_declined`) | "Largest decline: **SH11 Chicago**; 20 of 21 declined." SH11: $539,740.00 → $179,130.00 (−66.81%). Only SH00 Website grew (+121.61%). Interpretation: the data shows *that* revenue changed, not *why*. Caveat: only the two end years are compared. (`test2_answer.jpg`, `test2_tool_log.jpg`) | Pass | Earlier: next-step wording made generic for channel/category questions |
+| 3. Missing information | "Which E-Presso store is the most profitable?" | None (declined by design) | Decline: no costs or margins in the data, so revenue cannot show profitability; do not name a "most profitable" store | "I cannot answer that: the loaded data contains revenue only, with no costs, expenses or margins, so profitability cannot be calculated. Revenue is not profit…" Next steps list the missing information (operating costs, profit by store, leases, staffing, customer behavior). Tool log: 0 calls. (`test3_answer.jpg`) | Pass | None needed |
+| 4. Analytical judgment | "Does higher customer satisfaction cause higher revenue?" | `get_satisfaction_vs_revenue()` | Report the association with its size and sample, say that correlation is not causation, and exclude unscored store-years rather than treating them as 0 | r = **0.235** (weak positive) across 100 store-years; interest r = 0.125. "This is an association… not evidence that satisfaction causes revenue (or the reverse)." Lists the 5 SH00 (website) store-years left out because they have no score. Next step: collect costs, traffic and store size before treating satisfaction as a lever. (`test4_answer.jpg`) | Pass | None needed |
+| 5. Updated data | "What is E-Presso's total revenue?" asked before and after uploading `validation/Sales_plus1000.txt` (row S0120270601: 260 → 1,260) into the Sales box, with no restart | `get_total_revenue()` | Before $42,174,440.00 from the default file; after $42,175,440.00, with the scope naming the uploaded file | Before: **$42,174,440.00**, "Data: Default: data/Sales.txt". After: **$42,175,440.00**, "Data: Uploaded: Sales_plus1000.txt". The upload was then removed, and the app returned to the default file. (`test5_before.jpg`, `test5_after.jpg`) | Pass | None needed |
+| Extra: fix and retest | "What is the weather in Denver?" | none (after fix) | Unsupported reply | Before the fix it returned Denver's revenue; after the fix, an unsupported reply with no tool call. See the first entry above. | Pass after fix | Router fallback and keyword matching |
