@@ -247,8 +247,12 @@ def rules_router(question: str, model: dict) -> dict:
 
 
 # ------------------------------------------------- language-model router
-# gemini-2.5-flash was closed to new users (404) on 2026-11-10; Google's error named this one.
-DEFAULT_LLM_MODEL = 'gemini-3.8-flash'
+# Chosen by timing every available model on the five required tests (2026-11-13):
+# gemini-3.5-flash-lite answered all five correctly in 1.4–2.8 s; gemini-3.8-flash took 70 s+ or
+# returned 503/504. History: gemini-2.5-flash was closed to new users (404) on 2026-11-10.
+DEFAULT_LLM_MODEL = 'gemini-3.5-flash-lite'
+# Tried first, in order, if the configured model is gone or overloaded (only if this key has them).
+BACKUP_MODELS = ('gemini-3.5-flash', 'gemini-3.6-flash')
 MAX_TOOL_ROUNDS = 4  # the model may ask for tools at most this many times per question
 
 ANSWER_FORMAT = """Answer in exactly this format, with nothing before it:
@@ -423,6 +427,9 @@ def newest_flash_model(client, exclude: str | None = None) -> str | None:
         if ('flash' in name and name != exclude and 'generateContent' in actions and not any(
                 bad in name for bad in ('lite', 'image', 'live', 'tts', 'audio', 'exp', 'preview'))):
             names.append(name)
+    for preferred in BACKUP_MODELS:          # known-fast backups first
+        if preferred in names:
+            return preferred
     return max(names, key=version) if names else None
 
 

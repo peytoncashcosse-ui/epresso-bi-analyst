@@ -99,7 +99,8 @@ If an updated lookup table repeats a key, the app keeps the first row for that k
 assistant (Option B)** as an automatic fallback and as a selectable mode ("Use the rules-based assistant only").
 
 **How an answer is produced**
-1. The question goes to Gemini (`gemini-3.8-flash` by default) along with descriptions of eight approved tools. Every
+1. The question goes to Gemini (`gemini-3.5-flash-lite` by default, chosen by timing every available model on the
+   five required tests: about 2 s per answer) along with descriptions of eight approved tools. Every
    parameter is limited to values in the loaded data (real years, stores, categories and channels).
 2. When Gemini requests a tool, **our dispatcher** (`agent.run_tool`) checks the name and arguments, runs the
    function on the loaded data and logs the call. The SDK's automatic function calling is turned off.

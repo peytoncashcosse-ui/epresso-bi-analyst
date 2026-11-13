@@ -204,3 +204,16 @@ def test_thinking_is_low_and_dropped_if_rejected(model):
     out = agent.answer_question('Website 2026?', model, mode='llm', client=client)
     assert str(client.requests[0]['thinking']).endswith('LOW')    # first try asked for LOW
     assert 'Option A' in out['mode'] and 'Number check passed' in out['mode']
+
+def test_backup_prefers_known_fast_model():
+    class Lister:
+        def __init__(self):
+            self.models = self
+
+        def list(self):
+            names = ('gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3.5-flash', 'gemini-3.5-flash-lite')
+            return [SimpleNamespace(name=f'models/{n}', supported_actions=['generateContent'])
+                    for n in names]
+
+    # newest is 3.8, but the known-fast backup 3.5-flash is chosen first
+    assert agent.newest_flash_model(Lister(), exclude='gemini-3.5-flash-lite') == 'gemini-3.5-flash'

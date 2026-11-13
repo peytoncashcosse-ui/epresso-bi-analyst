@@ -39,6 +39,17 @@ Mode under test: **rules-based assistant (Option B)**. The language-model router
 | Follow-up problem | After the retry fix, the same question left the app on "Calculating..." for more than 3 minutes. Each request could wait up to 90 s before timing out, and with retries plus a model switch the waits added up. This is also why the student reported that "the agent isn't working". |
 | Follow-up fix | Each request now times out after 25 s, and the whole answer has a 60 s budget (`TIME_BUDGET`). Retries and the model switch only happen while time remains; after that, the rules-based assistant answers and says "no answer within 60 s". Test: `test_slow_model_falls_back_within_time_budget`. |
 
+## Fix and retest: the model choice was the real problem, 2026-11-13
+
+| Item | Entry |
+|---|---|
+| Symptom | A day later, Gemini mode still timed out (504 DEADLINE_EXCEEDED) on every question, so it was not a passing outage. |
+| Diagnosis | With a local copy of the key (in the git-ignored `.streamlit/secrets.toml`), every model the key can use was timed on Test 1 through the app's real agent code, with a 120 s limit and no retries. |
+| Timings | `gemini-3.5-flash-lite` **3.0 s, correct, number check passed** · `gemini-3.1-flash-lite` 3.8 s, 503 overloaded · `gemini-3.5-flash` 24.5 s, correct · `gemini-3.6-flash` 34.4 s, correct · `gemini-3.7-flash` 68.8 s, 503 · `gemini-3.8-flash` (the default until now) 73.0 s, 503 |
+| Cause | The default, `gemini-3.8-flash`, was the slowest and most overloaded model. Its normal response time (25–70 s) is longer than the 25 s request limit added on 2026-11-12, so it could never succeed. |
+| Fix | Default changed to `gemini-3.5-flash-lite`. If it is unavailable, the backups are tried in order: `gemini-3.5-flash`, then `gemini-3.6-flash`. Test: `test_backup_prefers_known_fast_model`. |
+| Retest (local, real API) | All five required questions run with `gemini-3.5-flash-lite`: every answer was correct, took 1.4–2.8 s, and passed the number check (Test 3 used no numbers or tools). Test 5 gave $42,174,440.00 before and $42,175,440.00 with the +$1,000 file. Live retest below. |
+
 ## Required tests
 
 **Run on the live app on 2026-11-12 with the rules-based assistant (Option B).** The "Use the rules-based assistant only"
