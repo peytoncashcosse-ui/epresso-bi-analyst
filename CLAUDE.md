@@ -96,6 +96,12 @@ Survey Analysis page (scatter of Satisfaction vs Revenue by Survey ID, store tab
 - 2026-11-12: Final README written. Reflection + contribution statement DRAFTED in validation/reflection.md (about 486
   words incl. ✏️ placeholders the student must personalize; their name is deliberately left out). **Remaining:** the student
   edits the reflection; Option A retest in Gemini mode; final pre-submission check (wake app, open URL, Canvas links).
+- 2026-11-13: **Option A DONE.** Local key in git-ignored .streamlit/secrets.toml (only presence was checked, never
+  printed). Timed all models: gemini-3.5-flash-lite 3 s and correct; 3.8-flash 70 s+ or 503. Default is now 3.5-flash-lite,
+  with backups 3.5-flash and 3.6-flash. All five tests pass LIVE in Gemini mode with the number check passing; screenshots in
+  validation/screenshots/gemini_*.jpg. 71 tests. Timing scripts are in the session scratchpad (not the repo).
+  **Remaining:** the student personalizes validation/reflection.md (it should now mention that Gemini works);
+  final pre-submission check.
   Still owed: Power BI numbers from the user for the validation table; assistant before/after question for agent Test 5.
 
 ## Build plan (Project Guide order)

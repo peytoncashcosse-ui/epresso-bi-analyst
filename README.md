@@ -139,8 +139,9 @@ present correlation as causation; or make a recommendation the data cannot suppo
 **Scope:** every answer starts with what it covers and names the Sales file in use. The dashboard filters are **not**
 applied to the assistant, and the answer says so.
 
-**Status:** Gemini mode worked on the live app on 2026-11-11 (number check passed). On 2026-11-12 Gemini was
-overloaded (503/504 errors), so the five required tests were run in rules-based mode. See `validation/agent_tests.md`.
+**Status:** all five required tests pass on the live app in **both** modes. In Gemini mode (2026-11-13, after switching to
+`gemini-3.5-flash-lite`), every answer passed the number check within a few seconds. In rules-based mode (2026-11-12),
+the tests were run while the earlier default model was overloaded. See `validation/agent_tests.md`.
 
 ## Validation
 - **Power BI comparison:** all six measures match: total ($42,174,440), Website ($27,218,880), Brick & Mortar

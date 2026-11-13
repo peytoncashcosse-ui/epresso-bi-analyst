@@ -50,7 +50,22 @@ Mode under test: **rules-based assistant (Option B)**. The language-model router
 | Fix | Default changed to `gemini-3.5-flash-lite`. If it is unavailable, the backups are tried in order: `gemini-3.5-flash`, then `gemini-3.6-flash`. Test: `test_backup_prefers_known_fast_model`. |
 | Retest (local, real API) | All five required questions run with `gemini-3.5-flash-lite`: every answer was correct, took 1.4–2.8 s, and passed the number check (Test 3 used no numbers or tools). Test 5 gave $42,174,440.00 before and $42,175,440.00 with the +$1,000 file. Live retest below. |
 
-## Required tests
+## Required tests: language-model agent (Option A), live app, 2026-11-13
+
+Run on the live app after the switch to `gemini-3.5-flash-lite`, with the "rules-based only" switch **off**. Every
+answer says "Answered by: Language-model agent (Option A, gemini-3.5-flash-lite, function calling)", and every answer
+with numbers says "Number check passed: every number matches a tool result". Each answer took only a few seconds.
+Screenshots: `validation/screenshots/gemini_*.jpg`.
+
+| Test | Question asked | Function(s) Gemini chose | Expected result / behavior | Actual result | Pass / Fail | Revision made |
+|---|---|---|---|---|---|---|
+| 1. Numerical calculation | "How much revenue did the website generate in 2028?" | `get_total_revenue(channel="Website", year="2028")` | $6,339,640.00, matching the independent PowerShell check | Findings: **$6,339,640.00**. Interpretation: total website revenue in 2028. Next steps: no recommendation; missing operating costs and profit margins. Number check passed. (`gemini_test1_answer_and_log.jpg` shows the tool-call log) | Pass | Model switched to gemini-3.5-flash-lite (see above) |
+| 2. Numerical comparison | "Which store experienced the greatest percentage revenue decline between 2025 and 2029?" | `get_growth(by="store", start_year="2025", end_year="2029")` | SH11 Chicago, −66.81% | "SH11 Chicago experienced the greatest percentage revenue decline… **-66.81%** (revenue went from $539,740.00 in 2025 to $179,130.00 in 2029, a change of -$360,610.00)." Interpretation: revenue is not profit. Next steps: no recommendation; missing cost structure, operating expenses and local market factors. Number check passed. (`gemini_test2_*.jpg`) | Pass | None |
+| 3. Missing information | "Which E-Presso store is the most profitable?" | `get_growth(by="store")`, used as revenue context | Must not name a "most profitable" store; must say revenue is not profit and name the missing cost data | Findings give revenue facts only (SH00 Website grew 121.61%; SH11 Chicago fell 66.81%). Interpretation: "While SH00 Website generates the highest revenue, **revenue is not profit**. The provided data does not include operating costs, expenses, or profit margins." Next steps: no recommendation; missing store-level costs and margins. Number check passed. (`gemini_test3_*.jpg`) | Pass | None. (In the rules-based run this question was declined with no tool call; Gemini instead gave revenue context, then the same refusal to judge profit. Both are acceptable.) |
+| 4. Analytical judgment | "Does higher customer satisfaction cause higher revenue?" | `get_satisfaction_vs_revenue()` | Weak association (r = 0.235, 100 store-years); say that correlation is not causation; exclude unscored years | r = **0.235** (weak positive) and interest r = 0.125 across 100 store-years; the 5 SH00 store-years without scores are listed as excluded. "Higher customer satisfaction does not necessarily cause higher revenue… **correlation is not causation**, and other factors such as store size, location, or market may drive both." Next steps suggest controlled experiments to test causation. Number check passed. (`gemini_test4_*.jpg`) | Pass | None |
+| 5. Updated data | "What is E-Presso's total revenue?" before and after uploading `validation/Sales_plus1000.txt` into the Sales box (no restart) | `get_total_revenue()` both times | $42,174,440.00 before; $42,175,440.00 after; scope names the uploaded file | Before: **$42,174,440.00**, "Data: Default: data/Sales.txt". After: **$42,175,440.00**, "Data: Uploaded: Sales_plus1000.txt". Both answered by Gemini, number check passed. The upload was then removed, restoring the default data. (`gemini_test5_before.jpg`, `gemini_test5_after.jpg`) | Pass | None |
+
+## Required tests: rules-based assistant (Option B)
 
 **Run on the live app on 2026-11-12 with the rules-based assistant (Option B).** The "Use the rules-based assistant only"
 switch was turned on because Gemini was overloaded that day (503 UNAVAILABLE and 504 DEADLINE_EXCEEDED on every attempt;
